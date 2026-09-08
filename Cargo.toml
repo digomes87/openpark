@@ -16,7 +16,7 @@ publish = false
 [dependencies]
 # Tracked by branch until the engine's renderer lands on `main`; moves to a
 # version from crates.io at the engine's first release.
-isogrid = { git = "https://github.com/digomes87/isogrid", branch = "feat/renderer", features = [
+isogrid = { version = "0.1", git = "https://github.com/digomes87/isogrid", branch = "feat/renderer", features = [
   "macroquad-backend",
   "serde",
 ] }
