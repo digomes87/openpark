@@ -1,0 +1,116 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  binaries:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package (tar.gz)
+        if: matrix.archive == 'tar.gz'
+        run: |
+          tar -czf openpark-${{ matrix.target }}.tar.gz \
+            -C target/${{ matrix.target }}/release openpark \
+            -C "$GITHUB_WORKSPACE" README.md LICENSE-MIT LICENSE-APACHE
+      - name: Package (zip)
+        if: matrix.archive == 'zip'
+        run: |
+          7z a openpark-${{ matrix.target }}.zip `
+            ./target/${{ matrix.target }}/release/openpark.exe `
+            ./README.md ./LICENSE-MIT ./LICENSE-APACHE
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: openpark-${{ matrix.target }}.*
+          generate_release_notes: true
+
+  web:
+    name: wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked --target wasm32-unknown-unknown
+
+      - name: Assemble the web build
+        run: |
+          mkdir -p web
+          cp target/wasm32-unknown-unknown/release/openpark.wasm web/
+          # macroquad ships the JS shim that loads the module.
+          curl -sSfL -o web/mq_js_bundle.js \
+            https://raw.githubusercontent.com/not-fl3/macroquad/master/js/mq_js_bundle.js
+          cat > web/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8" />
+              <meta name="viewport" content="width=device-width, initial-scale=1" />
+              <title>OpenPark</title>
+              <style>
+                html, body, canvas { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #1b2633; }
+                canvas { display: block; }
+              </style>
+            </head>
+            <body>
+              <canvas id="glcanvas" tabindex="1"></canvas>
+              <script src="mq_js_bundle.js"></script>
+              <script>load("openpark.wasm");</script>
+            </body>
+          </html>
+          HTML
+          tar -czf openpark-web.tar.gz -C web .
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: openpark-web.tar.gz
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+
+  pages:
+    name: Publish to GitHub Pages
+    needs: web
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
