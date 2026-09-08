@@ -14,9 +14,9 @@ categories = ["games"]
 publish = false
 
 [dependencies]
-# Tracked by branch until the engine's renderer lands on `main`; moves to a
-# version from crates.io at the engine's first release.
-isogrid = { version = "0.1", git = "https://github.com/digomes87/isogrid", branch = "feat/renderer", features = [
+# Tracked from the engine's `main` until its first crates.io release, at which
+# point the `git` key goes away and the version constraint stays.
+isogrid = { version = "0.1", git = "https://github.com/digomes87/isogrid", branch = "main", features = [
   "macroquad-backend",
   "serde",
 ] }

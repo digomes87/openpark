@@ -264,7 +264,7 @@ dependencies = [
 [[package]]
 name = "isogrid"
 version = "0.1.0"
-source = "git+https://github.com/digomes87/isogrid?branch=feat%2Frenderer#78b1c3c147a9960afb5a99dd258e6af8a80c43e5"
+source = "git+https://github.com/digomes87/isogrid?branch=main#9081f97c0872e2e53995b9de571db0ee8ce1f5c7"
 dependencies = [
  "glam 0.33.7",
  "macroquad",
