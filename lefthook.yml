@@ -1,0 +1,18 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt:
+      glob: "*.rs"
+      run: cargo fmt --all --check
+      fail_text: "Unformatted code. Run `just fmt`."
+    clippy:
+      glob: "*.rs"
+      run: cargo clippy --all-targets --all-features -- -D warnings
+      fail_text: "Clippy is unhappy. Run `just clippy`."
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        head -1 {1} | grep -Eq '^(feat|fix|docs|refactor|test|perf|chore|ci|build|revert)(\([a-z0-9._-]+\))?!?: .{1,80}$' \
+          || { echo "Commit subject must follow Conventional Commits, e.g. 'feat(camera): add zoom'."; exit 1; }
