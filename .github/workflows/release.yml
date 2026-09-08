@@ -49,7 +49,7 @@ jobs:
             ./target/${{ matrix.target }}/release/openpark.exe `
             ./README.md ./LICENSE-MIT ./LICENSE-APACHE
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: openpark-${{ matrix.target }}.*
           generate_release_notes: true
@@ -93,7 +93,7 @@ jobs:
           HTML
           tar -czf openpark-web.tar.gz -C web .
 
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           files: openpark-web.tar.gz
 
