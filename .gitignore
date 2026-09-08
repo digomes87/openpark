@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+*.pdb
+Cargo.lock.orig
+
+# Coverage
+/lcov.info
+/coverage
+
+# Editors
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# mdBook
+/book
