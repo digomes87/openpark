@@ -2,7 +2,8 @@
 //!
 //! The isometric machinery — projection, grids, camera, ticks, pathfinding,
 //! rendering — lives in [`isogrid`]. Everything here is the game: land, money,
-//! the guests who walk it, and eventually the rides they queue for.
+//! the guests who walk it and what they want from it, and eventually the rides
+//! they queue for.
 //!
 //! The crate is a library with a thin binary on top, so that the simulation can
 //! be tested without a window. Drawing goes through
