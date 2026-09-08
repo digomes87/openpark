@@ -79,10 +79,10 @@ just test    # tests only
 just cov     # coverage
 ```
 
-The engine is tracked by branch in `Cargo.toml` until its renderer lands on
-`main`. The `version = "0.1"` constraint sits alongside the git source, so
-switching to the published crate later is a one-line deletion — and so that
-`cargo deny` does not see a wildcard dependency.
+The engine is tracked from its `main` branch until its first crates.io release.
+The `version = "0.1"` constraint sits alongside the git source, so switching to
+the published crate is a one-line deletion — and so that `cargo deny` does not
+see a wildcard dependency.
 
 Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
