@@ -99,7 +99,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-deny
-      - uses: rustsec/audit-check@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+      # `cargo deny check` covers the RustSec advisory database as well as
+      # licenses, banned crates and sources, all from one `deny.toml`. Running
+      # `cargo audit` alongside it duplicated the advisory scan against a second
+      # ignore list that had to be kept in sync by hand.
       - run: cargo deny check
