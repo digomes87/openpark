@@ -3,6 +3,8 @@
 //! Everything here goes through [`isogrid::render::Renderer`], so the whole
 //! view can be tested against a recording renderer without opening a window.
 
+mod guest;
+
 use isogrid::camera::Camera;
 use isogrid::iso::{ScreenPoint, TilePos};
 use isogrid::render::{draw_tiles, Color, Renderer, TileShape};
@@ -24,13 +26,16 @@ const HUD_MARGIN: f32 = 16.0;
 const HUD_LINE: f32 = 22.0;
 const HUD_SIZE: f32 = 20.0;
 
-/// Draws the whole frame: sky, land, the tile under the pointer, then the HUD.
+/// Draws the whole frame: sky, land, crowd, the tile under the pointer, then
+/// the HUD.
 ///
 /// The order is the whole trick — the ground is painted back to front by the
-/// engine, the highlight goes over it, and the HUD goes over everything.
+/// engine, the guests stand on top of it, the highlight goes over them, and the
+/// HUD goes over everything.
 pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, hovered: Option<TilePos>) {
     canvas.clear(SKY);
     draw_land(canvas, park, camera);
+    guest::draw_guests(canvas, park, camera);
 
     if let Some(tile) = hovered {
         draw_highlight(canvas, camera, tile);
@@ -80,6 +85,7 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, hovered: Op
     let lines = [
         park.name().to_owned(),
         format!("Cash: {}", park.cash()),
+        format!("Guests: {}", park.guests().len()),
         format!("Tick: {}", park.tick().get()),
         format!("Zoom: {:.2}x", camera.zoom()),
         under_pointer,
@@ -147,6 +153,58 @@ mod tests {
         for pair in tiles.windows(2) {
             assert!(pair[0].0.centre.y <= pair[1].0.centre.y);
         }
+    }
+
+    #[test]
+    fn the_crowd_is_drawn_over_the_land_and_under_the_hud() {
+        let mut park = Park::new("Test Park", 16, 16, 1).expect("a valid park");
+        for _ in 0..600 {
+            park.tick_once();
+        }
+        let (_, camera) = fixture();
+
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &park, &camera, None);
+
+        let last_tile = canvas
+            .commands()
+            .iter()
+            .rposition(|command| matches!(command, Command::FillTile(..)))
+            .expect("the land is drawn");
+        let first_guest = canvas
+            .commands()
+            .iter()
+            .position(|command| matches!(command, Command::Line(..)))
+            .expect("the crowd is drawn");
+        let first_text = canvas
+            .commands()
+            .iter()
+            .position(|command| matches!(command, Command::Text(..)))
+            .expect("the hud is drawn");
+
+        assert!(
+            last_tile < first_guest,
+            "the land was painted over the crowd"
+        );
+        assert!(
+            first_guest < first_text,
+            "the crowd was painted over the hud"
+        );
+    }
+
+    #[test]
+    fn the_hud_counts_the_crowd() {
+        let mut park = Park::new("Test Park", 16, 16, 1).expect("a valid park");
+        for _ in 0..600 {
+            park.tick_once();
+        }
+        let (_, camera) = fixture();
+
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &park, &camera, None);
+        assert!(texts(&canvas)
+            .iter()
+            .any(|line| line == &format!("Guests: {}", park.guests().len())));
     }
 
     #[test]

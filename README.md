@@ -15,9 +15,10 @@ isometric engine, a deterministic simulation, and tests for all of it.
 
 ## Status
 
-Early. Right now you get a park to look at: generated land, a camera you can pan
-and zoom, and a tile that highlights under the cursor. Guests, rides and money
-that does something are the next steps — see the [roadmap](#roadmap).
+Early. Right now you get a park with people in it: generated land, a camera you
+can pan and zoom, a tile that highlights under the cursor, and guests who come
+through the gate, pay their admission and wander the paths. Rides and guests who
+want something from them are the next steps — see the [roadmap](#roadmap).
 
 ## Running it
 
@@ -63,7 +64,7 @@ code — be tested without opening a window.
 ## Roadmap
 
 - [x] Land, a camera, and a window to look at it through
-- [ ] Guests who walk the paths
+- [x] Guests who walk the paths
 - [ ] Guest needs: hunger, happiness, energy, money
 - [ ] The track builder and ride physics
 - [ ] Shops, prices, staff and a park that can go bankrupt
