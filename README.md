@@ -17,9 +17,9 @@ isometric engine, a deterministic simulation, and tests for all of it.
 
 Early. Right now you get a park with people in it: generated land, a camera you
 can pan and zoom, a tile that highlights under the cursor, and guests who come
-through the gate, pay their admission, wander the paths, get hungry and footsore
-and — since there is still nothing to eat or ride — eventually go home. Giving
-them a reason to stay is the next step: see the [roadmap](#roadmap).
+through the gate, pay their admission, wander the paths, get hungry and footsore,
+queue at a food stall or drop onto a bench, and go home unhappy if the park has
+nothing to offer them. Rides are the next step — see the [roadmap](#roadmap).
 
 ## Running it
 
@@ -67,7 +67,8 @@ code — be tested without opening a window.
 - [x] Land, a camera, and a window to look at it through
 - [x] Guests who walk the paths
 - [x] Guest needs: hunger, energy, happiness
-- [ ] Shops and benches, so a need can actually be met
+- [x] Food stalls and benches, and guests who spend money at them
+- [ ] Building them yourself, from a menu, with the mouse
 - [ ] The track builder and ride physics
 - [ ] Shops, prices, staff and a park that can go bankrupt
 - [ ] Terrain editing
