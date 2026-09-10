@@ -13,6 +13,16 @@ run:
 debug:
     RUST_LOG=openpark=debug,isogrid=debug cargo run
 
+# Retake the screenshots in the README.
+screenshots:
+    cargo build --release
+    ./target/release/openpark --screenshot docs/images/park.png --ticks 6000 --zoom 0.75 --focus 24,24
+    ./target/release/openpark --screenshot docs/images/stall.png --ticks 6000 --zoom 2.4 --focus 24,13
+    ./target/release/openpark --screenshot docs/images/building.png --ticks 6000 --zoom 1.6 --focus 24,13 --tool stall --hover 28,15
+    # The window is drawn at the display's pixel density, so shrink to a size
+    # a README wants to load.
+    for shot in docs/images/*.png; do sips -Z 1280 "$shot" >/dev/null; done
+
 # Format the workspace.
 fmt:
     cargo fmt --all
