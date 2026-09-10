@@ -828,6 +828,12 @@ mod tests {
                     guest.id(),
                     park.terrain()[tile]
                 );
+                assert_eq!(
+                    park.facility_at(tile),
+                    None,
+                    "guest {} is standing inside a building",
+                    guest.id()
+                );
             }
         }
     }
