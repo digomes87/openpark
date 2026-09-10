@@ -8,13 +8,21 @@ use isogrid::render::Renderer;
 use isogrid::time::Tick;
 
 use crate::park::Park;
-use crate::view;
+use crate::tool::Tool;
+use crate::view::{self, Overlay};
 
 /// How fast the arrow keys scroll, in tiles per tick.
 const KEYBOARD_PAN_SPEED: f32 = 0.25;
 
 /// How much one notch of the wheel changes the zoom.
 const ZOOM_STEP: f32 = 1.25;
+
+/// How many frames to draw before taking a screenshot.
+///
+/// The first frame of a fresh window is drawn before the size the operating
+/// system actually gave it is known, so a shot taken then can come out the
+/// wrong shape.
+const FRAMES_BEFORE_A_SCREENSHOT: u32 = 3;
 
 /// The running game.
 ///
@@ -24,6 +32,17 @@ pub struct OpenPark {
     park: Park,
     camera: Camera,
     hovered: Option<TilePos>,
+    /// A tile the pointer is pinned to, for screenshots taken without a hand
+    /// on the mouse.
+    pinned: Option<TilePos>,
+    tool: Tool,
+    /// What the last click did, or why it did nothing.
+    status: Option<String>,
+    /// Where to save a picture of the next frame but one, if this run is only
+    /// here to take one.
+    screenshot: Option<String>,
+    /// How many frames have been drawn.
+    frames: u32,
     quit: bool,
 }
 
@@ -51,6 +70,11 @@ impl OpenPark {
             park,
             camera,
             hovered: None,
+            pinned: None,
+            tool: Tool::default(),
+            status: None,
+            screenshot: None,
+            frames: 0,
             quit: false,
         })
     }
@@ -70,6 +94,40 @@ impl OpenPark {
         self.hovered
     }
 
+    /// What clicking would do.
+    pub const fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    /// What the last click did, or why it did nothing.
+    pub fn status(&self) -> Option<&str> {
+        self.status.as_deref()
+    }
+
+    /// Picks a tool, as the space bar does.
+    pub fn select(&mut self, tool: Tool) {
+        self.tool = tool;
+        self.status = None;
+    }
+
+    /// Asks for a picture of the game, saved to `path`, after which it closes.
+    ///
+    /// Taken a few frames in, once the window has settled on its real size.
+    pub fn take_a_screenshot(&mut self, path: impl Into<String>) {
+        self.screenshot = Some(path.into());
+    }
+
+    /// The camera, for a caller that wants to frame a shot.
+    pub const fn camera_mut(&mut self) -> &mut Camera {
+        &mut self.camera
+    }
+
+    /// Pins the pointer to a tile, for a screenshot taken with nobody at the
+    /// keyboard. Pass `None` to hand the pointer back to the mouse.
+    pub fn pin_pointer(&mut self, tile: Option<TilePos>) {
+        self.pinned = tile;
+    }
+
     fn centre_of(park: &Park) -> isogrid::iso::GridPoint {
         #[allow(clippy::cast_precision_loss)]
         isogrid::iso::GridPoint::ground(park.width() as f32 / 2.0, park.height() as f32 / 2.0)
@@ -80,8 +138,18 @@ impl OpenPark {
     /// Split out from [`App::tick`] so it can be driven directly in tests
     /// without a window.
     pub fn handle_input(&mut self, input: &Input) {
+        // Escape puts the tool down first, and only closes the game once the
+        // pointer is empty — the same order every builder expects.
         if input.key_pressed(Key::Escape) {
-            self.quit = true;
+            if self.tool.is_active() {
+                self.select(Tool::Inspect);
+            } else {
+                self.quit = true;
+            }
+        }
+
+        if input.key_pressed(Key::Space) {
+            self.select(self.tool.next());
         }
 
         // Dragging with either the middle or the right button pans, which is
@@ -119,7 +187,32 @@ impl OpenPark {
         }
 
         let tile = self.camera.pick_tile(input.pointer(), 0.0);
-        self.hovered = self.park.terrain().contains(tile).then_some(tile);
+        self.hovered = self
+            .pinned
+            .or_else(|| self.park.terrain().contains(tile).then_some(tile));
+
+        if input.button_pressed(Button::Left) {
+            self.use_the_tool();
+        }
+    }
+
+    /// Applies the held tool to the tile under the pointer.
+    fn use_the_tool(&mut self) {
+        let Some(tile) = self.hovered else {
+            return;
+        };
+
+        self.status = match self.tool {
+            Tool::Inspect => return,
+            Tool::Build(facility) => match self.park.build(tile, facility) {
+                Ok(()) => Some(format!("Built a {}", facility.name().to_lowercase())),
+                Err(refused) => Some(refused.to_string()),
+            },
+            Tool::Demolish => Some(self.park.demolish(tile).map_or_else(
+                || "There is nothing there to demolish".to_owned(),
+                |facility| format!("Demolished a {}", facility.name().to_lowercase()),
+            )),
+        };
     }
 }
 
@@ -130,7 +223,20 @@ impl App for OpenPark {
     }
 
     fn draw(&mut self, canvas: &mut dyn Renderer, _alpha: f32) {
-        view::draw(canvas, &self.park, &self.camera, self.hovered);
+        let overlay = Overlay {
+            hovered: self.hovered,
+            tool: self.tool,
+            status: self.status.as_deref(),
+        };
+        view::draw(canvas, &self.park, &self.camera, &overlay);
+
+        self.frames += 1;
+        if self.frames >= FRAMES_BEFORE_A_SCREENSHOT {
+            if let Some(path) = self.screenshot.take() {
+                crate::screenshot::capture(&path);
+                self.quit = true;
+            }
+        }
     }
 
     fn resize(&mut self, width: f32, height: f32) {
@@ -151,6 +257,7 @@ mod tests {
     #![allow(clippy::float_cmp)]
 
     use super::*;
+    use crate::park::Facility;
 
     fn game() -> OpenPark {
         let park = Park::new("Test Park", 32, 32, 1).expect("a valid park");
@@ -273,13 +380,154 @@ mod tests {
     }
 
     #[test]
-    fn escape_asks_to_quit() {
+    fn escape_puts_the_tool_down_before_it_closes_the_game() {
         let mut game = game();
-        assert!(!game.should_quit());
+        game.select(Tool::Build(Facility::Bench));
+
+        frame(&mut game, ScreenPoint::ZERO, |input| {
+            input.press_key(Key::Escape);
+        });
+        assert_eq!(game.tool(), Tool::Inspect, "the tool survived escape");
+        assert!(!game.should_quit(), "the game closed with a tool in hand");
+
         frame(&mut game, ScreenPoint::ZERO, |input| {
             input.press_key(Key::Escape);
         });
         assert!(game.should_quit());
+    }
+
+    #[test]
+    fn space_walks_through_the_tools() {
+        let mut game = game();
+        assert_eq!(game.tool(), Tool::Inspect);
+
+        for expected in Tool::ORDER.iter().skip(1).chain(Some(&Tool::Inspect)) {
+            frame(&mut game, ScreenPoint::ZERO, |input| {
+                input.press_key(Key::Space);
+            });
+            assert_eq!(game.tool(), *expected);
+        }
+    }
+
+    /// Clicks on one tile, wherever it happens to be on screen.
+    ///
+    /// The pointer is pinned rather than aimed: which pixel a tile sits under
+    /// is the camera's business, and this is testing the click.
+    fn click_on(game: &mut OpenPark, tile: TilePos) {
+        game.pin_pointer(Some(tile));
+
+        let mut input = Input::default();
+        input.begin_frame(ScreenPoint::ZERO);
+        input.press_button(Button::Left);
+        game.handle_input(&input);
+    }
+
+    /// Somewhere in the park a bench could go.
+    fn bare_ground(game: &OpenPark) -> TilePos {
+        game.park()
+            .terrain()
+            .positions()
+            .find(|tile| game.park().can_build(*tile, Facility::Bench))
+            .expect("there is ground to build on")
+    }
+
+    #[test]
+    fn looking_around_changes_nothing_however_much_it_is_clicked() {
+        let mut game = game();
+        let before = game.park().clone();
+        let tile = bare_ground(&game);
+
+        click_on(&mut game, tile);
+        assert_eq!(game.park(), &before);
+        assert_eq!(game.status(), None);
+    }
+
+    #[test]
+    fn a_click_with_a_building_tool_builds_and_charges_for_it() {
+        let mut game = game();
+        let cash = game.park().cash();
+        let tile = bare_ground(&game);
+
+        game.select(Tool::Build(Facility::Bench));
+        click_on(&mut game, tile);
+
+        assert_eq!(game.park().facility_at(tile), Some(Facility::Bench));
+        assert_eq!(game.park().cash(), cash - Facility::Bench.build_cost());
+        assert!(game.status().unwrap().contains("Built"));
+    }
+
+    #[test]
+    fn a_refused_build_says_why_and_changes_nothing() {
+        let mut game = game();
+        let tile = bare_ground(&game);
+        game.select(Tool::Build(Facility::Bench));
+        click_on(&mut game, tile);
+
+        let cash = game.park().cash();
+        click_on(&mut game, tile);
+
+        assert_eq!(game.park().cash(), cash, "it was built twice");
+        assert!(
+            game.status().unwrap().contains("already something"),
+            "unhelpful refusal: {:?}",
+            game.status()
+        );
+    }
+
+    #[test]
+    fn demolishing_takes_down_what_is_there_and_says_so_when_nothing_is() {
+        let mut game = game();
+        let tile = bare_ground(&game);
+        game.select(Tool::Build(Facility::Bench));
+        click_on(&mut game, tile);
+
+        game.select(Tool::Demolish);
+        click_on(&mut game, tile);
+        assert_eq!(game.park().facility_at(tile), None);
+        assert!(game.status().unwrap().contains("Demolished"));
+
+        click_on(&mut game, tile);
+        assert!(game.status().unwrap().contains("nothing there"));
+    }
+
+    #[test]
+    fn picking_a_tool_clears_what_the_last_click_said() {
+        let mut game = game();
+        let tile = bare_ground(&game);
+        game.select(Tool::Demolish);
+        click_on(&mut game, tile);
+        assert!(game.status().is_some());
+
+        game.select(Tool::Inspect);
+        assert_eq!(game.status(), None);
+    }
+
+    #[test]
+    fn a_click_outside_the_park_builds_nothing() {
+        let mut game = game();
+        game.select(Tool::Build(Facility::Bench));
+        game.pin_pointer(None);
+
+        let mut input = Input::default();
+        input.begin_frame(ScreenPoint::new(-10_000.0, 0.0));
+        input.press_button(Button::Left);
+        game.handle_input(&input);
+
+        assert_eq!(game.status(), None);
+    }
+
+    #[test]
+    fn a_pinned_pointer_hovers_where_it_was_told_to() {
+        let mut game = game();
+        let tile = TilePos::new(3, 4);
+        game.pin_pointer(Some(tile));
+
+        frame(&mut game, ScreenPoint::new(-10_000.0, 0.0), |_| {});
+        assert_eq!(game.hovered(), Some(tile));
+
+        game.pin_pointer(None);
+        frame(&mut game, ScreenPoint::new(-10_000.0, 0.0), |_| {});
+        assert_eq!(game.hovered(), None);
     }
 
     #[test]

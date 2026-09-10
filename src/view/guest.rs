@@ -12,7 +12,7 @@ use isogrid::render::{Color, Renderer};
 use crate::park::{Guest, Park};
 
 /// What a guest casts on the ground.
-const SHADOW: Color = Color::rgba(0, 0, 0, 80);
+const SHADOW: Color = Color::rgba(0, 0, 0, 55);
 
 /// The colour of a head.
 const SKIN: Color = Color::hex(0xE8_C3_9E);
@@ -24,12 +24,17 @@ const MISERABLE: Color = Color::hex(0xD9_54_4D);
 
 /// Every measurement below is a fraction of a tile's width on screen, so a
 /// guest stays the same size relative to the land at any zoom.
-const BODY_HEIGHT: f32 = 0.28;
-const HEAD_HEIGHT: f32 = 0.13;
-const BODY_WIDTH: f32 = 0.13;
-const SHADOW_WIDTH: f32 = 0.20;
-const PIP_HEIGHT: f32 = 0.07;
-const PIP_GAP: f32 = 0.06;
+const BODY_HEIGHT: f32 = 0.30;
+const HEAD_HEIGHT: f32 = 0.09;
+const BODY_WIDTH: f32 = 0.12;
+const SHADOW_WIDTH: f32 = 0.24;
+const PIP_HEIGHT: f32 = 0.06;
+const PIP_GAP: f32 = 0.05;
+
+/// How the head, the shadow and the mood pip are drawn against [`BODY_WIDTH`].
+const HEAD_WIDTH: f32 = 0.6;
+const SHADOW_THICKNESS: f32 = 0.3;
+const PIP_WIDTH: f32 = 0.5;
 
 /// Draws everyone in the park, nearest last so that the crowd overlaps the way
 /// the land does.
@@ -98,7 +103,7 @@ fn draw_guest(canvas: &mut dyn Renderer, feet: ScreenPoint, scale: f32, guest: &
     canvas.line(
         ScreenPoint::new(feet.x - half_shadow, feet.y),
         ScreenPoint::new(feet.x + half_shadow, feet.y),
-        BODY_WIDTH * scale * 0.6,
+        BODY_WIDTH * scale * SHADOW_THICKNESS,
         SHADOW,
     );
 
@@ -106,13 +111,13 @@ fn draw_guest(canvas: &mut dyn Renderer, feet: ScreenPoint, scale: f32, guest: &
     canvas.line(feet, shoulders, BODY_WIDTH * scale, guest.shirt_colour());
 
     let crown = ScreenPoint::new(feet.x, shoulders.y - HEAD_HEIGHT * scale);
-    canvas.line(shoulders, crown, BODY_WIDTH * scale * 0.8, SKIN);
+    canvas.line(shoulders, crown, BODY_WIDTH * scale * HEAD_WIDTH, SKIN);
 
     let pip = ScreenPoint::new(feet.x, crown.y - PIP_GAP * scale);
     canvas.line(
         pip,
         ScreenPoint::new(pip.x, pip.y - PIP_HEIGHT * scale),
-        BODY_WIDTH * scale * 0.6,
+        BODY_WIDTH * scale * PIP_WIDTH,
         mood_colour(guest.needs().happiness()),
     );
 }

@@ -5,6 +5,7 @@ use isogrid::backend::macroquad::run;
 use isogrid::time::TickRate;
 use macroquad::prelude::Conf;
 use openpark::app::OpenPark;
+use openpark::cli::Options;
 use openpark::park::Park;
 
 /// The window the game opens in.
@@ -34,21 +35,44 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    // A fixed seed for now. Choosing one — a scenario, a random park, a save
-    // file — is the next thing to build, and hard-coding it keeps every run
-    // reproducible until then.
-    let park = Park::new("Forest Frontiers", PARK_SIZE, PARK_SIZE, 1)
+    let options = Options::parse(std::env::args().skip(1)).map_err(|refused| {
+        eprintln!("{refused}");
+        refused
+    })?;
+
+    let mut park = Park::new("Forest Frontiers", PARK_SIZE, PARK_SIZE, options.seed)
         .context("failed to lay out the starting park")?;
+
+    // Fast-forward before the window opens rather than waiting out the ticks at
+    // playing speed: a screenshot of a park half an hour into its day should
+    // not take half an hour to produce.
+    for _ in 0..options.ticks {
+        park.tick_once();
+    }
 
     tracing::info!(
         park = park.name(),
         size = format!("{}x{}", park.width(), park.height()),
+        guests = park.guests().len(),
+        tick = park.tick().get(),
         "opening the gates"
     );
 
     #[allow(clippy::cast_precision_loss)]
-    let game = OpenPark::new(park, WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)
+    let mut game = OpenPark::new(park, WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)
         .context("failed to set up the view")?;
+
+    game.select(options.tool);
+    game.pin_pointer(options.hover);
+    if let Some(focus) = options.focus {
+        game.camera_mut().look_at(focus.centre());
+    }
+    if let Some(zoom) = options.zoom {
+        game.camera_mut().set_zoom(zoom);
+    }
+    if let Some(path) = options.screenshot {
+        game.take_a_screenshot(path);
+    }
 
     run(game, TickRate::CLASSIC).await;
 

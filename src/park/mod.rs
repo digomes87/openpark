@@ -233,6 +233,20 @@ impl Park {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn build(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
+        self.check_build(tile, facility)?;
+        self.facilities.replace(tile, Some(facility));
+        self.adjust_cash(-facility.build_cost());
+        Ok(())
+    }
+
+    /// Whether [`Park::build`] would succeed, for a cursor that wants to say so
+    /// before the click rather than after it.
+    pub fn can_build(&self, tile: TilePos, facility: Facility) -> bool {
+        self.check_build(tile, facility).is_ok()
+    }
+
+    /// Why a facility cannot be bought for a tile, as an error worth showing.
+    fn check_build(&self, tile: TilePos, facility: Facility) -> Result<()> {
         anyhow::ensure!(
             self.cash >= facility.build_cost(),
             "a {} costs {} and the park has {}",
@@ -241,13 +255,11 @@ impl Park {
             self.cash,
         );
 
-        self.put_up(tile, facility)?;
-        self.adjust_cash(-facility.build_cost());
-        Ok(())
+        self.check_ground(tile, facility)
     }
 
-    /// Puts a facility up without charging for it.
-    fn put_up(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
+    /// Why a tile will not take a facility, money aside.
+    fn check_ground(&self, tile: TilePos, facility: Facility) -> Result<()> {
         let ground = *self
             .terrain
             .get(tile)
@@ -260,9 +272,15 @@ impl Park {
         );
         anyhow::ensure!(
             self.facility_at(tile).is_none(),
-            "{tile:?} is already taken",
+            "there is already something on {tile:?}",
         );
 
+        Ok(())
+    }
+
+    /// Puts a facility up without charging for it.
+    fn put_up(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
+        self.check_ground(tile, facility)?;
         self.facilities.replace(tile, Some(facility));
         Ok(())
     }
@@ -1007,6 +1025,59 @@ mod tests {
             park.cash() > Park::STARTING_CASH + Park::ADMISSION,
             "the turnstile stopped taking money"
         );
+    }
+
+    #[test]
+    fn a_cursor_can_ask_before_it_clicks() {
+        let mut park = Park::new("Building", 32, 32, 5).unwrap();
+        let grass = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile].is_buildable() && park.facility_at(*tile).is_none())
+            .expect("there is bare ground somewhere");
+
+        assert!(park.can_build(grass, Facility::Bench));
+        park.build(grass, Facility::Bench).unwrap();
+        assert!(!park.can_build(grass, Facility::Bench), "it is taken now");
+
+        let water = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile] == Terrain::Water)
+            .expect("this park has a lake");
+        assert!(!park.can_build(water, Facility::Bench));
+        assert!(!park.can_build(TilePos::new(999, 999), Facility::Bench));
+    }
+
+    #[test]
+    fn a_park_that_cannot_pay_cannot_build() {
+        let mut park = Park::new("Broke", 32, 32, 5).unwrap();
+        park.adjust_cash(-park.cash());
+
+        let grass = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile].is_buildable() && park.facility_at(*tile).is_none())
+            .expect("there is bare ground somewhere");
+
+        assert!(!park.can_build(grass, Facility::FoodStall));
+        let refused = park.build(grass, Facility::FoodStall).unwrap_err();
+        assert!(refused.to_string().contains("costs"), "{refused}");
+        assert_eq!(park.facility_at(grass), None);
+    }
+
+    #[test]
+    fn demolishing_gives_the_ground_back() {
+        let mut park = Park::new("Clearing", 32, 32, 5).unwrap();
+        let built = park
+            .facilities()
+            .iter()
+            .find_map(|(tile, facility)| facility.map(|facility| (tile, facility)))
+            .expect("a new park comes with something on it");
+
+        assert_eq!(park.demolish(built.0), Some(built.1));
+        assert_eq!(park.demolish(built.0), None, "it was already gone");
+        assert!(park.can_build(built.0, Facility::Bench));
     }
 
     #[test]
