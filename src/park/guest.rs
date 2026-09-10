@@ -6,9 +6,10 @@
 
 use isogrid::iso::{GridPoint, TilePos};
 use isogrid::render::Color;
+use isogrid::time::Tick;
 use serde::{Deserialize, Serialize};
 
-use crate::park::Needs;
+use crate::park::{Facility, Money, Needs};
 
 /// The shirts guests turn up in.
 ///
@@ -27,11 +28,25 @@ const SHIRTS: [Color; 6] = [
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Plan {
-    /// Having a look around. The default, and for now the only thing there is
-    /// to do.
+    /// Having a look around, with nothing particular in mind.
     Wandering,
+    /// On the way to the facility standing on `facility`, which the guest will
+    /// use from the tile beside it.
+    Visiting { facility: TilePos },
+    /// Standing at `facility`, busy until `until`.
+    Using { facility: TilePos, until: Tick },
     /// On the way to the gate, and out of the park once it gets there.
     GoingHome,
+}
+
+impl Plan {
+    /// The facility this plan is about, if it is about one.
+    pub const fn facility(self) -> Option<TilePos> {
+        match self {
+            Self::Visiting { facility } | Self::Using { facility, .. } => Some(facility),
+            Self::Wandering | Self::GoingHome => None,
+        }
+    }
 }
 
 /// One visitor.
@@ -44,7 +59,7 @@ pub enum Plan {
 /// # use openpark::park::Guest;
 /// # use isogrid::iso::TilePos;
 /// let gate = TilePos::new(4, 0);
-/// let mut guest = Guest::arriving(1, gate, 0);
+/// let mut guest = Guest::arriving(1, gate, 0, 100);
 /// assert!(guest.is_idle(), "a guest with nowhere to go stands still");
 ///
 /// guest.follow(vec![gate, gate.offset(0, 1)])?;
@@ -69,11 +84,14 @@ pub struct Guest {
     needs: Needs,
     /// What the guest is doing about it.
     plan: Plan,
+    /// What is left in its pocket.
+    money: Money,
 }
 
 impl Guest {
-    /// A guest who has just walked through the gate at `at`.
-    pub fn arriving(id: u32, at: TilePos, shirt: u8) -> Self {
+    /// A guest who has just walked through the gate at `at`, carrying `money`
+    /// to spend inside.
+    pub fn arriving(id: u32, at: TilePos, shirt: u8, money: Money) -> Self {
         Self {
             id,
             route: vec![at],
@@ -82,6 +100,7 @@ impl Guest {
             shirt,
             needs: Needs::fresh(),
             plan: Plan::Wandering,
+            money,
         }
     }
 
@@ -148,7 +167,7 @@ impl Guest {
     /// ```
     /// # use openpark::park::{Guest, Plan};
     /// # use isogrid::iso::TilePos;
-    /// let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+    /// let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
     /// guest.decide(Plan::GoingHome);
     /// guest.decide(Plan::Wandering);
     /// assert_eq!(guest.plan(), Plan::GoingHome);
@@ -157,6 +176,46 @@ impl Guest {
         if self.plan != Plan::GoingHome {
             self.plan = plan;
         }
+    }
+
+    /// What the guest has left to spend.
+    pub const fn money(&self) -> Money {
+        self.money
+    }
+
+    /// Whether the guest can pay `price` and still have it be worth asking.
+    pub const fn can_afford(&self, price: Money) -> bool {
+        self.money >= price
+    }
+
+    /// Uses a facility: pays for it, and gets what it came for.
+    ///
+    /// Returns what the guest handed over, which is the park's to keep. A guest
+    /// that cannot afford the price pays nothing and gets nothing, which is the
+    /// caller's mistake — [`Guest::can_afford`] is there to be asked first.
+    ///
+    /// ```
+    /// # use openpark::park::{Facility, Guest};
+    /// # use isogrid::iso::TilePos;
+    /// let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
+    /// let paid = guest.enjoy(Facility::FoodStall);
+    ///
+    /// assert_eq!(paid, Facility::FoodStall.price());
+    /// assert_eq!(guest.money(), 100 - paid);
+    /// assert!(!guest.needs().wants_food());
+    /// ```
+    pub fn enjoy(&mut self, facility: Facility) -> Money {
+        let price = facility.price();
+        if !self.can_afford(price) {
+            return 0;
+        }
+
+        self.money -= price;
+        match facility {
+            Facility::FoodStall => self.needs.eat(),
+            Facility::Bench => self.needs.rest(),
+        }
+        price
     }
 
     /// One tick of being in the park: the guest gets hungrier and more tired,
@@ -224,7 +283,7 @@ mod tests {
     use super::*;
 
     fn walking() -> Guest {
-        let mut guest = Guest::arriving(1, TilePos::new(0, 0), 0);
+        let mut guest = Guest::arriving(1, TilePos::new(0, 0), 0, 100);
         guest
             .follow(vec![
                 TilePos::new(0, 0),
@@ -237,7 +296,7 @@ mod tests {
 
     #[test]
     fn a_new_guest_stands_where_it_arrived_with_nowhere_to_go() {
-        let guest = Guest::arriving(7, TilePos::new(4, 0), 2);
+        let guest = Guest::arriving(7, TilePos::new(4, 0), 2, 100);
         assert_eq!(guest.id(), 7);
         assert_eq!(guest.tile(), TilePos::new(4, 0));
         assert!(guest.is_idle());
@@ -287,7 +346,7 @@ mod tests {
 
     #[test]
     fn a_route_must_start_where_the_guest_is() {
-        let mut guest = Guest::arriving(1, TilePos::new(0, 0), 0);
+        let mut guest = Guest::arriving(1, TilePos::new(0, 0), 0, 100);
         assert!(guest.follow(vec![]).is_err());
         assert!(guest.follow(vec![TilePos::new(5, 5)]).is_err());
         assert!(guest.follow(vec![TilePos::new(0, 0)]).is_ok());
@@ -307,7 +366,7 @@ mod tests {
     #[test]
     fn guests_wear_one_of_the_shirts_however_high_the_number() {
         for shirt in 0..=u8::MAX {
-            let guest = Guest::arriving(0, TilePos::ORIGIN, shirt);
+            let guest = Guest::arriving(0, TilePos::ORIGIN, shirt, 100);
             assert!(SHIRTS.contains(&guest.shirt_colour()));
         }
     }
@@ -315,7 +374,7 @@ mod tests {
     #[test]
     fn living_wears_a_guest_down_faster_while_it_walks() {
         let mut walker = walking();
-        let mut loiterer = Guest::arriving(2, TilePos::ORIGIN, 0);
+        let mut loiterer = Guest::arriving(2, TilePos::ORIGIN, 0, 100);
         for _ in 0..100 {
             walker.live();
             loiterer.live();
@@ -327,19 +386,70 @@ mod tests {
 
     #[test]
     fn a_guest_arrives_meaning_to_look_around() {
-        let guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+        let guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
         assert_eq!(guest.plan(), Plan::Wandering);
         assert!(!guest.is_going_home());
     }
 
     #[test]
     fn a_guest_who_has_decided_to_leave_cannot_be_talked_out_of_it() {
-        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
         guest.decide(Plan::GoingHome);
         assert!(guest.is_going_home());
 
         guest.decide(Plan::Wandering);
         assert!(guest.is_going_home());
+    }
+
+    #[test]
+    fn a_guest_pays_for_what_it_uses() {
+        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
+        // Standing about is restful, so this takes longer than a walk would.
+        for _ in 0..Needs::TICKS_UNTIL_HUNGRY * 2 {
+            guest.live();
+        }
+        assert!(guest.needs().wants_food());
+
+        let paid = guest.enjoy(Facility::FoodStall);
+        assert_eq!(paid, Facility::FoodStall.price());
+        assert_eq!(guest.money(), 100 - paid);
+        assert!(!guest.needs().wants_food());
+    }
+
+    #[test]
+    fn sitting_down_costs_nothing() {
+        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
+        assert_eq!(guest.enjoy(Facility::Bench), 0);
+        assert_eq!(guest.money(), 100);
+    }
+
+    #[test]
+    fn a_guest_with_empty_pockets_gets_nothing() {
+        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 0);
+        for _ in 0..Needs::TICKS_UNTIL_HUNGRY * 2 {
+            guest.live();
+        }
+
+        assert!(!guest.can_afford(Facility::FoodStall.price()));
+        assert_eq!(guest.enjoy(Facility::FoodStall), 0);
+        assert!(guest.needs().wants_food(), "it was fed for free");
+        assert_eq!(guest.money(), 0);
+    }
+
+    #[test]
+    fn a_plan_knows_which_facility_it_is_about() {
+        let tile = TilePos::new(3, 4);
+        assert_eq!(Plan::Wandering.facility(), None);
+        assert_eq!(Plan::GoingHome.facility(), None);
+        assert_eq!(Plan::Visiting { facility: tile }.facility(), Some(tile));
+        assert_eq!(
+            Plan::Using {
+                facility: tile,
+                until: Tick::new(10)
+            }
+            .facility(),
+            Some(tile)
+        );
     }
 
     #[test]
