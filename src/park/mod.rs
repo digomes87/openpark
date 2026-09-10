@@ -1,9 +1,11 @@
 //! The park itself: the land, the money, and the clock it all runs on.
 
 mod guest;
+mod needs;
 mod terrain;
 
-pub use guest::Guest;
+pub use guest::{Guest, Plan};
+pub use needs::Needs;
 pub use terrain::Terrain;
 
 use core::num::NonZeroU32;
@@ -37,6 +39,8 @@ pub struct Park {
     /// The id the next guest through the gate will get. Never reused, so that
     /// a guest can be followed across saves.
     next_guest_id: u32,
+    /// How many guests have walked back out again.
+    guests_who_left: u32,
 }
 
 impl Park {
@@ -135,6 +139,7 @@ impl Park {
             rng,
             tick: Tick::ZERO,
             next_guest_id: 0,
+            guests_who_left: 0,
         })
     }
 
@@ -151,6 +156,40 @@ impl Park {
     /// Everyone currently in the park.
     pub fn guests(&self) -> &[Guest] {
         &self.guests
+    }
+
+    /// How the park is going down with the people in it, from 0 to 1, or `None`
+    /// when there is nobody to ask.
+    ///
+    /// ```
+    /// # use openpark::park::Park;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// assert_eq!(park.average_happiness(), None, "an empty park has no opinion");
+    ///
+    /// for _ in 0..200 {
+    ///     park.tick_once();
+    /// }
+    /// assert!(park.average_happiness().is_some());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn average_happiness(&self) -> Option<f32> {
+        if self.guests.is_empty() {
+            return None;
+        }
+
+        let total: f32 = self
+            .guests
+            .iter()
+            .map(|guest| guest.needs().happiness())
+            .sum();
+        #[allow(clippy::cast_precision_loss)]
+        let count = self.guests.len() as f32;
+        Some(total / count)
+    }
+
+    /// How many guests have left since the park opened.
+    pub const fn guests_who_left(&self) -> u32 {
+        self.guests_who_left
     }
 
     /// The tile guests arrive on: where the path down the middle meets the
@@ -230,6 +269,7 @@ impl Park {
         self.tick = self.tick.after(1);
         self.admit_a_guest();
         self.walk_the_guests();
+        self.show_out_the_guests();
     }
 
     /// Lets one guest in, if one is due and there is room.
@@ -252,6 +292,8 @@ impl Park {
     /// Moves every guest one tick's worth along its route, finding a new route
     /// for anyone who has arrived where they were going.
     fn walk_the_guests(&mut self) {
+        let entrance = self.entrance();
+
         // Destructured so that the borrow checker can see the guests, the land
         // and the dice as three separate things.
         let Self {
@@ -266,8 +308,20 @@ impl Park {
         let mut finder = PathFinder::new();
 
         for guest in guests.iter_mut() {
+            guest.live();
+
+            if guest.needs().is_fed_up() {
+                guest.decide(Plan::GoingHome);
+            }
+
             if guest.is_idle() {
-                if let Some(route) = wander(terrain, rng, &mut finder, guest.tile()) {
+                let route = if guest.is_going_home() {
+                    route_to(terrain, &mut finder, guest.tile(), entrance)
+                } else {
+                    wander(terrain, rng, &mut finder, guest.tile())
+                };
+
+                if let Some(route) = route {
                     if let Err(error) = guest.follow(route) {
                         // Only reachable if the pathfinder returned a route
                         // starting somewhere other than where it was asked to.
@@ -280,6 +334,24 @@ impl Park {
         }
     }
 
+    /// Sees off everyone who has made it back to the gate.
+    fn show_out_the_guests(&mut self) {
+        let entrance = self.entrance();
+        let before = self.guests.len();
+
+        self.guests.retain(|guest| {
+            !(guest.is_going_home() && guest.is_idle() && guest.tile() == entrance)
+        });
+
+        let left = before - self.guests.len();
+        if left > 0 {
+            self.guests_who_left = self
+                .guests_who_left
+                .saturating_add(u32::try_from(left).unwrap_or(u32::MAX));
+            tracing::debug!(left, remaining = self.guests.len(), "guests went home");
+        }
+    }
+
     /// How far a guest standing on `terrain` moves in one tick.
     fn speed_across(terrain: Terrain) -> f32 {
         let cost = terrain.walk_cost().unwrap_or(1);
@@ -287,6 +359,19 @@ impl Park {
         let slowdown = (cost - 1) as f32 * Self::ROUGH_GROUND_PENALTY;
         Self::WALK_SPEED / (1.0 + slowdown)
     }
+}
+
+/// Works out how to walk from one tile to another, if it can be done at all.
+fn route_to(
+    terrain: &Grid<Terrain>,
+    finder: &mut PathFinder,
+    from: TilePos,
+    to: TilePos,
+) -> Option<Vec<TilePos>> {
+    let map = with_cost(terrain, |ground: &Terrain| {
+        NonZeroU32::new(ground.walk_cost()?)
+    });
+    Some(finder.find(&map, from, to)?.tiles().to_vec())
 }
 
 /// Picks somewhere for a guest at `from` to go, and works out how to get there.
@@ -300,10 +385,6 @@ fn wander(
     finder: &mut PathFinder,
     from: TilePos,
 ) -> Option<Vec<TilePos>> {
-    let map = with_cost(terrain, |ground: &Terrain| {
-        NonZeroU32::new(ground.walk_cost()?)
-    });
-
     for attempt in 0..Park::WANDER_ATTEMPTS {
         #[allow(clippy::cast_possible_wrap)]
         let goal = TilePos::new(
@@ -323,8 +404,8 @@ fn wander(
         };
 
         if wanted {
-            if let Some(route) = finder.find(&map, from, goal) {
-                return Some(route.tiles().to_vec());
+            if let Some(route) = route_to(terrain, finder, from, goal) {
+                return Some(route);
             }
         }
     }
@@ -511,6 +592,100 @@ mod tests {
         // Impassable ground is never stood on, but a speed of zero there would
         // strand anyone the terrain changed underneath.
         assert!(Park::speed_across(Terrain::Water) > 0.0);
+    }
+
+    #[test]
+    fn guests_wear_down_as_they_walk_the_park() {
+        let park = opened_for(2_000);
+        let guest = &park.guests()[0];
+        assert!(guest.needs().hunger() > 0.0, "nobody worked up an appetite");
+        assert!(guest.needs().energy() < 1.0, "nobody's feet hurt");
+    }
+
+    #[test]
+    fn an_empty_park_has_no_opinion_of_itself() {
+        let park = Park::new("Empty", 16, 16, 0).unwrap();
+        assert_eq!(park.average_happiness(), None);
+    }
+
+    #[test]
+    fn the_average_mood_sits_between_the_moods_it_averages() {
+        let park = opened_for(2_000);
+        let happiness = park.average_happiness().expect("there is a crowd to ask");
+
+        let moods: Vec<f32> = park
+            .guests()
+            .iter()
+            .map(|guest| guest.needs().happiness())
+            .collect();
+        let lowest = moods.iter().copied().fold(f32::INFINITY, f32::min);
+        let highest = moods.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+        assert!(happiness >= lowest && happiness <= highest);
+    }
+
+    /// How long a guest lasts in a park with nothing in it, near enough.
+    const A_WHOLE_VISIT: u64 = 20_000;
+
+    #[test]
+    fn a_park_with_nothing_in_it_sends_its_guests_home() {
+        let park = opened_for(A_WHOLE_VISIT);
+        assert!(park.guests_who_left() > 0, "nobody ever left");
+    }
+
+    #[test]
+    fn guests_leave_through_the_gate_and_not_over_the_fence() {
+        let mut park = Park::new("Leaving", 32, 32, 5).unwrap();
+        let mut seen_leaving = false;
+
+        for _ in 0..A_WHOLE_VISIT {
+            let before = park.guests().len();
+            park.tick_once();
+
+            // Anyone who left must have been standing at the gate to do it.
+            if park.guests().len() < before {
+                seen_leaving = true;
+                // A guest still walking through the gate on a longer route is
+                // fine; one that is going home, has run out of route, and is
+                // standing on the gate should have been shown out.
+                assert!(
+                    park.guests().iter().all(|guest| {
+                        !(guest.is_going_home()
+                            && guest.is_idle()
+                            && guest.tile() == park.entrance())
+                    }),
+                    "somebody was left standing at the gate"
+                );
+            }
+        }
+
+        assert!(
+            seen_leaving,
+            "nobody left in a whole visit's worth of ticks"
+        );
+    }
+
+    #[test]
+    fn only_the_fed_up_go_home() {
+        let park = opened_for(A_WHOLE_VISIT / 4);
+        for guest in park.guests() {
+            assert!(
+                !guest.is_going_home() || guest.needs().is_fed_up(),
+                "guest {} is leaving in a perfectly good mood",
+                guest.id()
+            );
+        }
+    }
+
+    #[test]
+    fn the_gate_keeps_working_after_people_start_leaving() {
+        let park = opened_for(A_WHOLE_VISIT * 2);
+        assert!(park.guests_who_left() > 0);
+        assert!(!park.guests().is_empty(), "the park emptied out for good");
+        assert!(
+            park.cash() > Park::STARTING_CASH + Park::ADMISSION,
+            "the turnstile stopped taking money"
+        );
     }
 
     #[test]

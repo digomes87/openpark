@@ -8,6 +8,8 @@ use isogrid::iso::{GridPoint, TilePos};
 use isogrid::render::Color;
 use serde::{Deserialize, Serialize};
 
+use crate::park::Needs;
+
 /// The shirts guests turn up in.
 ///
 /// Placeholder art, like the terrain: flat colours picked to stay legible
@@ -20,6 +22,17 @@ const SHIRTS: [Color; 6] = [
     Color::hex(0x9B_5D_C4),
     Color::hex(0xE8_E4_DC),
 ];
+
+/// What a guest is trying to do with the rest of its route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Plan {
+    /// Having a look around. The default, and for now the only thing there is
+    /// to do.
+    Wandering,
+    /// On the way to the gate, and out of the park once it gets there.
+    GoingHome,
+}
 
 /// One visitor.
 ///
@@ -52,6 +65,10 @@ pub struct Guest {
     progress: f32,
     /// Which of [`SHIRTS`] this guest wears.
     shirt: u8,
+    /// How the visit is going.
+    needs: Needs,
+    /// What the guest is doing about it.
+    plan: Plan,
 }
 
 impl Guest {
@@ -63,6 +80,8 @@ impl Guest {
             step: 0,
             progress: 0.0,
             shirt,
+            needs: Needs::fresh(),
+            plan: Plan::Wandering,
         }
     }
 
@@ -103,6 +122,50 @@ impl Guest {
     /// The colour this guest draws as.
     pub fn shirt_colour(&self) -> Color {
         SHIRTS[self.shirt as usize % SHIRTS.len()]
+    }
+
+    /// How the guest is feeling.
+    pub const fn needs(&self) -> Needs {
+        self.needs
+    }
+
+    /// What the guest is trying to do.
+    pub const fn plan(&self) -> Plan {
+        self.plan
+    }
+
+    /// Whether the guest is on its way out.
+    pub fn is_going_home(&self) -> bool {
+        self.plan == Plan::GoingHome
+    }
+
+    /// Changes the guest's mind.
+    ///
+    /// A guest that has decided to go home stays decided: a park with nothing
+    /// in it cannot talk anyone into staying, and letting it would leave guests
+    /// dithering at the gate forever.
+    ///
+    /// ```
+    /// # use openpark::park::{Guest, Plan};
+    /// # use isogrid::iso::TilePos;
+    /// let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+    /// guest.decide(Plan::GoingHome);
+    /// guest.decide(Plan::Wandering);
+    /// assert_eq!(guest.plan(), Plan::GoingHome);
+    /// ```
+    pub fn decide(&mut self, plan: Plan) {
+        if self.plan != Plan::GoingHome {
+            self.plan = plan;
+        }
+    }
+
+    /// One tick of being in the park: the guest gets hungrier and more tired,
+    /// and its mood follows.
+    ///
+    /// Walking is harder work than standing about, so a guest that has run out
+    /// of route wears down more slowly until it is given a new one.
+    pub fn live(&mut self) {
+        self.needs.wear_down(!self.is_idle());
     }
 
     /// Sends the guest off along a new route.
@@ -247,6 +310,36 @@ mod tests {
             let guest = Guest::arriving(0, TilePos::ORIGIN, shirt);
             assert!(SHIRTS.contains(&guest.shirt_colour()));
         }
+    }
+
+    #[test]
+    fn living_wears_a_guest_down_faster_while_it_walks() {
+        let mut walker = walking();
+        let mut loiterer = Guest::arriving(2, TilePos::ORIGIN, 0);
+        for _ in 0..100 {
+            walker.live();
+            loiterer.live();
+        }
+
+        assert!(walker.needs().hunger() > loiterer.needs().hunger());
+        assert!(walker.needs().energy() < loiterer.needs().energy());
+    }
+
+    #[test]
+    fn a_guest_arrives_meaning_to_look_around() {
+        let guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+        assert_eq!(guest.plan(), Plan::Wandering);
+        assert!(!guest.is_going_home());
+    }
+
+    #[test]
+    fn a_guest_who_has_decided_to_leave_cannot_be_talked_out_of_it() {
+        let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0);
+        guest.decide(Plan::GoingHome);
+        assert!(guest.is_going_home());
+
+        guest.decide(Plan::Wandering);
+        assert!(guest.is_going_home());
     }
 
     #[test]

@@ -86,6 +86,10 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, hovered: Op
         park.name().to_owned(),
         format!("Cash: {}", park.cash()),
         format!("Guests: {}", park.guests().len()),
+        park.average_happiness().map_or_else(
+            || "Happiness: —".to_owned(),
+            |happiness| format!("Happiness: {:.0}%", happiness * 100.0),
+        ),
         format!("Tick: {}", park.tick().get()),
         format!("Zoom: {:.2}x", camera.zoom()),
         under_pointer,
@@ -190,6 +194,24 @@ mod tests {
             first_guest < first_text,
             "the crowd was painted over the hud"
         );
+    }
+
+    #[test]
+    fn the_hud_reports_the_mood_of_the_crowd_once_there_is_one() {
+        let (empty, camera) = fixture();
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &empty, &camera, None);
+        assert!(texts(&canvas).iter().any(|line| line == "Happiness: —"));
+
+        let mut park = empty;
+        for _ in 0..600 {
+            park.tick_once();
+        }
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &park, &camera, None);
+        assert!(texts(&canvas)
+            .iter()
+            .any(|line| line.starts_with("Happiness: ") && line.ends_with('%')));
     }
 
     #[test]
