@@ -13,13 +13,30 @@ that, and it is not trying to replace [OpenRCT2](https://openrct2.org) either.
 It is an attempt to build the thing properly from the ground up — a hand-written
 isometric engine, a deterministic simulation, and tests for all of it.
 
+![A park at opening time: paths, a lake, food stalls and a hundred guests walking
+between them](docs/images/park.png)
+
 ## Status
 
-Early. Right now you get a park with people in it: generated land, a camera you
-can pan and zoom, a tile that highlights under the cursor, and guests who come
-through the gate, pay their admission, wander the paths, get hungry and footsore
-and — since there is still nothing to eat or ride — eventually go home. Giving
-them a reason to stay is the next step: see the [roadmap](#roadmap).
+Early, and playable enough to watch. Generated land, a camera you can pan and
+zoom, guests who come through the gate, pay their admission, wander the paths,
+get hungry and footsore, queue at a food stall or drop onto a bench — and go
+home unhappy if the park has nothing to offer them. You can put up stalls and
+benches yourself, and take them down again. Rides are the next step — see the
+[roadmap](#roadmap).
+
+Every guest carries a coloured pip: green when the visit is going well, red when
+it is not. A park in trouble is visible from across the map before the number in
+the corner says so.
+
+![A food stall close up, with guests queuing beside it and a bench along the
+path](docs/images/stall.png)
+
+Building: pick a tool with the space bar and the tile under the pointer says
+whether it would take it — green for yes, red for no — before you click.
+
+![Build mode, with a green outline on the tile a food stall would go
+on](docs/images/building.png)
 
 ## Running it
 
@@ -43,7 +60,26 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `Esc` | Quit |
+| `Space` | Cycle the tool: look, build a stall, build a bench, demolish |
+| Left click | Use the tool on the tile under the pointer |
+| `Esc` | Put the tool down, or quit when empty-handed |
+
+Number keys for the toolbar wait on the engine growing them; the space bar is
+the placeholder.
+
+### Taking a screenshot
+
+The pictures above are produced by the game itself, and can be reproduced
+exactly:
+
+```sh
+cargo run --release -- --screenshot docs/images/park.png \
+    --ticks 6000 --zoom 0.75 --focus 24,24
+```
+
+`--ticks` fast-forwards the simulation before the window opens, so a picture of
+a busy afternoon does not take an afternoon to take. `--seed`, `--focus`,
+`--zoom`, `--tool` and `--hover` frame the shot; `--help` lists them all.
 
 ## How it is put together
 
@@ -67,7 +103,8 @@ code — be tested without opening a window.
 - [x] Land, a camera, and a window to look at it through
 - [x] Guests who walk the paths
 - [x] Guest needs: hunger, energy, happiness
-- [ ] Shops and benches, so a need can actually be met
+- [x] Food stalls and benches, and guests who spend money at them
+- [x] Building and demolishing them yourself, with the mouse
 - [ ] The track builder and ride physics
 - [ ] Shops, prices, staff and a park that can go bankrupt
 - [ ] Terrain editing

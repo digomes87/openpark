@@ -1,9 +1,11 @@
 //! The park itself: the land, the money, and the clock it all runs on.
 
+mod facility;
 mod guest;
 mod needs;
 mod terrain;
 
+pub use facility::Facility;
 pub use guest::{Guest, Plan};
 pub use needs::Needs;
 pub use terrain::Terrain;
@@ -11,9 +13,9 @@ pub use terrain::Terrain;
 use core::num::NonZeroU32;
 
 use anyhow::{Context, Result};
-use isogrid::grid::Grid;
+use isogrid::grid::{Grid, TileBounds};
 use isogrid::iso::TilePos;
-use isogrid::path::{with_cost, PathFinder};
+use isogrid::path::{PathFinder, Traversable};
 use isogrid::rng::Rng;
 use isogrid::time::Tick;
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,7 @@ pub type Money = i64;
 pub struct Park {
     name: String,
     terrain: Grid<Terrain>,
+    facilities: Grid<Option<Facility>>,
     guests: Vec<Guest>,
     cash: Money,
     rng: Rng,
@@ -73,6 +76,16 @@ impl Park {
 
     /// How many goals a wandering guest considers before giving up for a tick.
     const WANDER_ATTEMPTS: u32 = 8;
+
+    /// What a guest arrives with in its pocket, at the least and at the most.
+    ///
+    /// Enough for a few meals: a guest that runs out has to go home hungry,
+    /// which is a fair outcome but should not be the usual one.
+    const SPENDING_MONEY: (i32, i32) = (60, 200);
+
+    /// How many of the nearest candidates a guest tries before deciding a
+    /// facility is out of reach.
+    const FACILITY_ATTEMPTS: usize = 4;
 
     /// How many of those attempts insist on a goal that is actually a path.
     ///
@@ -131,16 +144,50 @@ impl Park {
         })
         .context("the park is too small or too large for the engine to hold")?;
 
-        Ok(Self {
+        let facilities = Grid::filled(width, height, None)
+            .context("the park is too small or too large for the engine to hold")?;
+
+        let mut park = Self {
             name: name.into(),
             terrain,
+            facilities,
             guests: Vec::new(),
             cash: Self::STARTING_CASH,
             rng,
             tick: Tick::ZERO,
             next_guest_id: 0,
             guests_who_left: 0,
-        })
+        };
+
+        park.open_with_the_basics();
+        Ok(park)
+    }
+
+    /// Puts up the handful of stalls and benches a new park comes with.
+    ///
+    /// They are a gift rather than a purchase: a park that opened with nothing
+    /// at all would send its first guests home before its owner had finished
+    /// looking around.
+    fn open_with_the_basics(&mut self) {
+        let (mid_x, mid_y) = (self.entrance().x, self.height() / 2);
+        #[allow(clippy::cast_possible_wrap)]
+        let mid_y = mid_y as i32;
+
+        // Along the path down from the gate, alternating sides, so the first
+        // thing a guest walks past is somewhere to eat.
+        let plan = [
+            (TilePos::new(mid_x - 1, mid_y / 2), Facility::FoodStall),
+            (TilePos::new(mid_x + 1, mid_y / 2 + 3), Facility::Bench),
+            (TilePos::new(mid_x + 1, mid_y - 2), Facility::FoodStall),
+            (TilePos::new(mid_x - 1, mid_y + 2), Facility::Bench),
+            (TilePos::new(mid_x - 1, mid_y + 6), Facility::Bench),
+        ];
+
+        for (tile, facility) in plan {
+            // Ground that will not take it is simply left alone: on a small or
+            // an unlucky map some of these land in the lake.
+            let _ = self.put_up(tile, facility);
+        }
     }
 
     /// The park's name.
@@ -151,6 +198,99 @@ impl Park {
     /// The land.
     pub const fn terrain(&self) -> &Grid<Terrain> {
         &self.terrain
+    }
+
+    /// What has been built on it.
+    pub const fn facilities(&self) -> &Grid<Option<Facility>> {
+        &self.facilities
+    }
+
+    /// What stands on one tile, if anything does.
+    pub fn facility_at(&self, tile: TilePos) -> Option<Facility> {
+        self.facilities.get(tile).copied().flatten()
+    }
+
+    /// Builds a facility, taking its cost out of the bank.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the tile is outside the park, the ground will not take it,
+    /// something is already there, or the park cannot afford it. Nothing is
+    /// changed when it fails.
+    ///
+    /// ```
+    /// # use openpark::park::{Facility, Park};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let before = park.cash();
+    ///
+    /// let tile = TilePos::new(2, 2);
+    /// park.build(tile, Facility::Bench)?;
+    /// assert_eq!(park.facility_at(tile), Some(Facility::Bench));
+    /// assert_eq!(park.cash(), before - Facility::Bench.build_cost());
+    ///
+    /// assert!(park.build(tile, Facility::Bench).is_err(), "it is taken");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn build(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
+        self.check_build(tile, facility)?;
+        self.facilities.replace(tile, Some(facility));
+        self.adjust_cash(-facility.build_cost());
+        Ok(())
+    }
+
+    /// Whether [`Park::build`] would succeed, for a cursor that wants to say so
+    /// before the click rather than after it.
+    pub fn can_build(&self, tile: TilePos, facility: Facility) -> bool {
+        self.check_build(tile, facility).is_ok()
+    }
+
+    /// Why a facility cannot be bought for a tile, as an error worth showing.
+    fn check_build(&self, tile: TilePos, facility: Facility) -> Result<()> {
+        anyhow::ensure!(
+            self.cash >= facility.build_cost(),
+            "a {} costs {} and the park has {}",
+            facility.name(),
+            facility.build_cost(),
+            self.cash,
+        );
+
+        self.check_ground(tile, facility)
+    }
+
+    /// Why a tile will not take a facility, money aside.
+    fn check_ground(&self, tile: TilePos, facility: Facility) -> Result<()> {
+        let ground = *self
+            .terrain
+            .get(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?;
+
+        anyhow::ensure!(
+            ground.is_buildable(),
+            "a {} cannot be built on {ground:?}",
+            facility.name(),
+        );
+        anyhow::ensure!(
+            self.facility_at(tile).is_none(),
+            "there is already something on {tile:?}",
+        );
+
+        Ok(())
+    }
+
+    /// Puts a facility up without charging for it.
+    fn put_up(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
+        self.check_ground(tile, facility)?;
+        self.facilities.replace(tile, Some(facility));
+        Ok(())
+    }
+
+    /// Takes a facility down again, returning what was there.
+    ///
+    /// Nothing comes back for it: a demolished stall is a loss, which is what
+    /// makes building one a decision.
+    pub fn demolish(&mut self, tile: TilePos) -> Option<Facility> {
+        self.facilities.replace(tile, None).flatten()
     }
 
     /// Everyone currently in the park.
@@ -282,56 +422,141 @@ impl Park {
 
         #[allow(clippy::cast_possible_truncation)]
         let shirt = self.rng.next_u32() as u8;
-        let guest = Guest::arriving(self.next_guest_id, self.entrance(), shirt);
+        let (least, most) = Self::SPENDING_MONEY;
+        let money = Money::from(self.rng.range(least, most));
+        let guest = Guest::arriving(self.next_guest_id, self.entrance(), shirt, money);
 
         self.next_guest_id = self.next_guest_id.wrapping_add(1);
         self.guests.push(guest);
         self.adjust_cash(Self::ADMISSION);
     }
 
-    /// Moves every guest one tick's worth along its route, finding a new route
-    /// for anyone who has arrived where they were going.
+    /// Moves every guest one tick's worth along its route, and lets it act on
+    /// what it wants: eat, sit down, wander, or give up and go home.
     fn walk_the_guests(&mut self) {
         let entrance = self.entrance();
+        let now = self.tick;
 
-        // Destructured so that the borrow checker can see the guests, the land
-        // and the dice as three separate things.
+        // Destructured so that the borrow checker can see the guests, the land,
+        // what is built on it and the dice as separate things.
         let Self {
             terrain,
+            facilities,
             guests,
             rng,
             ..
         } = self;
 
+        let map = ParkMap {
+            terrain,
+            facilities,
+        };
+
         // Allocates nothing until a guest actually needs a route, and reuses
         // its buffers across everyone who does.
         let mut finder = PathFinder::new();
+        let mut takings = 0;
 
         for guest in guests.iter_mut() {
             guest.live();
+
+            // Someone in the middle of a meal or a sit down is busy.
+            if let Plan::Using { facility, until } = guest.plan() {
+                if now < until {
+                    continue;
+                }
+
+                if let Some(kind) = facilities.get(facility).copied().flatten() {
+                    takings += guest.enjoy(kind);
+                }
+                guest.decide(Plan::Wandering);
+            }
 
             if guest.needs().is_fed_up() {
                 guest.decide(Plan::GoingHome);
             }
 
-            if guest.is_idle() {
-                let route = if guest.is_going_home() {
-                    route_to(terrain, &mut finder, guest.tile(), entrance)
-                } else {
-                    wander(terrain, rng, &mut finder, guest.tile())
-                };
+            if !guest.is_idle() {
+                guest.advance(Self::speed_across(terrain[guest.tile()]));
+                continue;
+            }
 
-                if let Some(route) = route {
-                    if let Err(error) = guest.follow(route) {
-                        // Only reachable if the pathfinder returned a route
-                        // starting somewhere other than where it was asked to.
-                        tracing::warn!(%error, guest = guest.id(), "ignoring an impossible route");
+            // Arrived next to what it came for: stop and use it.
+            if let Plan::Visiting { facility } = guest.plan() {
+                if guest.tile().neighbours().contains(&facility) {
+                    if let Some(kind) = facilities.get(facility).copied().flatten() {
+                        guest.decide(Plan::Using {
+                            facility,
+                            until: now.after(kind.ticks_to_use()),
+                        });
+                        continue;
                     }
+                }
+            }
+
+            let route = match Self::what_next(guest, &map, rng, &mut finder, entrance) {
+                Some((plan, route)) => {
+                    guest.decide(plan);
+                    Some(route)
+                }
+                None => None,
+            };
+
+            if let Some(route) = route {
+                if let Err(error) = guest.follow(route) {
+                    // Only reachable if the pathfinder returned a route
+                    // starting somewhere other than where it was asked to.
+                    tracing::warn!(%error, guest = guest.id(), "ignoring an impossible route");
                 }
             }
 
             guest.advance(Self::speed_across(terrain[guest.tile()]));
         }
+
+        self.adjust_cash(takings);
+    }
+
+    /// Decides what an idle guest does next, and how it gets there.
+    ///
+    /// Returns `None` when nowhere it wants to go can be reached this tick,
+    /// which leaves the guest standing and trying again on the next one.
+    fn what_next(
+        guest: &Guest,
+        map: &ParkMap<'_>,
+        rng: &mut Rng,
+        finder: &mut PathFinder,
+        entrance: TilePos,
+    ) -> Option<(Plan, Vec<TilePos>)> {
+        let from = guest.tile();
+
+        if guest.is_going_home() {
+            return Some((
+                Plan::GoingHome,
+                finder.find(map, from, entrance)?.tiles().to_vec(),
+            ));
+        }
+
+        if let Some(wanted) = Self::what_it_wants(guest) {
+            if let Some((facility, route)) = nearest_facility(map, finder, from, wanted) {
+                return Some((Plan::Visiting { facility }, route));
+            }
+        }
+
+        Some((Plan::Wandering, wander(map, rng, finder, from)?))
+    }
+
+    /// What the guest would go out of its way for, if anything.
+    ///
+    /// Hunger first: it is the need that ends a visit, and a guest that cannot
+    /// afford the price has no reason to walk to the stall.
+    fn what_it_wants(guest: &Guest) -> Option<Facility> {
+        if guest.needs().wants_food() && guest.can_afford(Facility::FoodStall.price()) {
+            return Some(Facility::FoodStall);
+        }
+        if guest.needs().wants_a_sit_down() {
+            return Some(Facility::Bench);
+        }
+        None
     }
 
     /// Sees off everyone who has made it back to the gate.
@@ -361,17 +586,58 @@ impl Park {
     }
 }
 
-/// Works out how to walk from one tile to another, if it can be done at all.
-fn route_to(
-    terrain: &Grid<Terrain>,
+/// The park as the pathfinder sees it: ground that can be crossed, minus
+/// whatever has been built on it.
+///
+/// A facility blocks its own tile, which is what makes guests queue beside a
+/// stall rather than walk through it.
+struct ParkMap<'a> {
+    terrain: &'a Grid<Terrain>,
+    facilities: &'a Grid<Option<Facility>>,
+}
+
+impl Traversable for ParkMap<'_> {
+    fn bounds(&self) -> TileBounds {
+        self.terrain.bounds()
+    }
+
+    fn step_cost(&self, _from: TilePos, to: TilePos) -> Option<NonZeroU32> {
+        if self.facilities.get(to)?.is_some() {
+            return None;
+        }
+        NonZeroU32::new(self.terrain.get(to)?.walk_cost()?)
+    }
+}
+
+/// Finds the nearest facility of a kind that a guest at `from` can actually
+/// walk up to, and the route to the tile it would stand on.
+///
+/// Only the [`Park::FACILITY_ATTEMPTS`] nearest are tried: past that the walk
+/// is long enough that the guest may as well wander and ask again later.
+fn nearest_facility(
+    map: &ParkMap<'_>,
     finder: &mut PathFinder,
     from: TilePos,
-    to: TilePos,
-) -> Option<Vec<TilePos>> {
-    let map = with_cost(terrain, |ground: &Terrain| {
-        NonZeroU32::new(ground.walk_cost()?)
-    });
-    Some(finder.find(&map, from, to)?.tiles().to_vec())
+    wanted: Facility,
+) -> Option<(TilePos, Vec<TilePos>)> {
+    let mut candidates: Vec<(u32, TilePos)> = map
+        .facilities
+        .iter()
+        .filter(|(_, built)| **built == Some(wanted))
+        .map(|(tile, _)| (from.manhattan_distance(tile), tile))
+        .collect();
+    candidates.sort_unstable();
+
+    for (_, facility) in candidates.into_iter().take(Park::FACILITY_ATTEMPTS) {
+        // The counter is beside the stall, never on it.
+        for beside in facility.neighbours() {
+            if let Some(route) = finder.find(map, from, beside) {
+                return Some((facility, route.tiles().to_vec()));
+            }
+        }
+    }
+
+    None
 }
 
 /// Picks somewhere for a guest at `from` to go, and works out how to get there.
@@ -380,7 +646,7 @@ fn route_to(
 /// tries, which leaves the guest standing for a tick and trying again on the
 /// next one — cheaper than searching a whole park for the one open tile.
 fn wander(
-    terrain: &Grid<Terrain>,
+    map: &ParkMap<'_>,
     rng: &mut Rng,
     finder: &mut PathFinder,
     from: TilePos,
@@ -388,15 +654,15 @@ fn wander(
     for attempt in 0..Park::WANDER_ATTEMPTS {
         #[allow(clippy::cast_possible_wrap)]
         let goal = TilePos::new(
-            rng.below(terrain.width())? as i32,
-            rng.below(terrain.height())? as i32,
+            rng.below(map.terrain.width())? as i32,
+            rng.below(map.terrain.height())? as i32,
         );
 
         if goal == from {
             continue;
         }
 
-        let ground = terrain[goal];
+        let ground = map.terrain[goal];
         let wanted = if attempt < Park::PATH_ATTEMPTS {
             ground == Terrain::Path
         } else {
@@ -404,8 +670,8 @@ fn wander(
         };
 
         if wanted {
-            if let Some(route) = route_to(terrain, finder, from, goal) {
-                return Some(route);
+            if let Some(route) = finder.find(map, from, goal) {
+                return Some(route.tiles().to_vec());
             }
         }
     }
@@ -500,7 +766,21 @@ mod tests {
 
     /// Runs a park for `ticks` ticks and hands it back.
     fn opened_for(ticks: u64) -> Park {
-        let mut park = Park::new("Busy", 32, 32, 5).unwrap();
+        run(Park::new("Busy", 32, 32, 5).unwrap(), ticks)
+    }
+
+    /// Runs a park that has had everything torn down, so that guests have
+    /// nowhere to eat and nowhere to sit.
+    fn bare_park_opened_for(ticks: u64) -> Park {
+        let mut park = Park::new("Bare", 32, 32, 5).unwrap();
+        for tile in park.terrain().positions().collect::<Vec<_>>() {
+            park.demolish(tile);
+        }
+        assert!(park.facilities().iter().all(|(_, built)| built.is_none()));
+        run(park, ticks)
+    }
+
+    fn run(mut park: Park, ticks: u64) -> Park {
         for _ in 0..ticks {
             park.tick_once();
         }
@@ -566,6 +846,12 @@ mod tests {
                     guest.id(),
                     park.terrain()[tile]
                 );
+                assert_eq!(
+                    park.facility_at(tile),
+                    None,
+                    "guest {} is standing inside a building",
+                    guest.id()
+                );
             }
         }
     }
@@ -629,13 +915,66 @@ mod tests {
 
     #[test]
     fn a_park_with_nothing_in_it_sends_its_guests_home() {
-        let park = opened_for(A_WHOLE_VISIT);
+        let park = bare_park_opened_for(A_WHOLE_VISIT);
         assert!(park.guests_who_left() > 0, "nobody ever left");
+    }
+
+    #[test]
+    fn a_park_with_stalls_and_benches_keeps_its_guests() {
+        let fed = opened_for(A_WHOLE_VISIT);
+        let starved = bare_park_opened_for(A_WHOLE_VISIT);
+
+        assert!(
+            fed.guests_who_left() < starved.guests_who_left(),
+            "feeding the guests made no difference: {} left either way",
+            fed.guests_who_left()
+        );
+        assert!(
+            fed.average_happiness() > starved.average_happiness(),
+            "the crowd was no happier for being fed"
+        );
+    }
+
+    #[test]
+    fn the_stalls_take_money_off_the_guests() {
+        let park = opened_for(A_WHOLE_VISIT);
+        let inside = Money::try_from(park.guests().len()).expect("a countable crowd");
+        let admissions = (inside + Money::from(park.guests_who_left())) * Park::ADMISSION;
+
+        // The park's starting stalls were a gift rather than a purchase, so
+        // anything above the takings at the gate came over a counter.
+        assert!(
+            park.cash() > Park::STARTING_CASH + admissions,
+            "the park took {admissions} on the gate and nothing over the counter"
+        );
+    }
+
+    #[test]
+    fn guests_actually_eat_and_sit_down() {
+        let mut park = Park::new("Hungry", 32, 32, 5).unwrap();
+        let mut seen_using = false;
+
+        for _ in 0..A_WHOLE_VISIT {
+            park.tick_once();
+            if park
+                .guests()
+                .iter()
+                .any(|guest| matches!(guest.plan(), Plan::Using { .. }))
+            {
+                seen_using = true;
+                break;
+            }
+        }
+
+        assert!(seen_using, "nobody ever stopped at a stall or a bench");
     }
 
     #[test]
     fn guests_leave_through_the_gate_and_not_over_the_fence() {
         let mut park = Park::new("Leaving", 32, 32, 5).unwrap();
+        for tile in park.terrain().positions().collect::<Vec<_>>() {
+            park.demolish(tile);
+        }
         let mut seen_leaving = false;
 
         for _ in 0..A_WHOLE_VISIT {
@@ -667,7 +1006,7 @@ mod tests {
 
     #[test]
     fn only_the_fed_up_go_home() {
-        let park = opened_for(A_WHOLE_VISIT / 4);
+        let park = bare_park_opened_for(A_WHOLE_VISIT / 4);
         for guest in park.guests() {
             assert!(
                 !guest.is_going_home() || guest.needs().is_fed_up(),
@@ -679,13 +1018,66 @@ mod tests {
 
     #[test]
     fn the_gate_keeps_working_after_people_start_leaving() {
-        let park = opened_for(A_WHOLE_VISIT * 2);
+        let park = bare_park_opened_for(A_WHOLE_VISIT * 2);
         assert!(park.guests_who_left() > 0);
         assert!(!park.guests().is_empty(), "the park emptied out for good");
         assert!(
             park.cash() > Park::STARTING_CASH + Park::ADMISSION,
             "the turnstile stopped taking money"
         );
+    }
+
+    #[test]
+    fn a_cursor_can_ask_before_it_clicks() {
+        let mut park = Park::new("Building", 32, 32, 5).unwrap();
+        let grass = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile].is_buildable() && park.facility_at(*tile).is_none())
+            .expect("there is bare ground somewhere");
+
+        assert!(park.can_build(grass, Facility::Bench));
+        park.build(grass, Facility::Bench).unwrap();
+        assert!(!park.can_build(grass, Facility::Bench), "it is taken now");
+
+        let water = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile] == Terrain::Water)
+            .expect("this park has a lake");
+        assert!(!park.can_build(water, Facility::Bench));
+        assert!(!park.can_build(TilePos::new(999, 999), Facility::Bench));
+    }
+
+    #[test]
+    fn a_park_that_cannot_pay_cannot_build() {
+        let mut park = Park::new("Broke", 32, 32, 5).unwrap();
+        park.adjust_cash(-park.cash());
+
+        let grass = park
+            .terrain()
+            .positions()
+            .find(|tile| park.terrain()[*tile].is_buildable() && park.facility_at(*tile).is_none())
+            .expect("there is bare ground somewhere");
+
+        assert!(!park.can_build(grass, Facility::FoodStall));
+        let refused = park.build(grass, Facility::FoodStall).unwrap_err();
+        assert!(refused.to_string().contains("costs"), "{refused}");
+        assert_eq!(park.facility_at(grass), None);
+    }
+
+    #[test]
+    fn demolishing_gives_the_ground_back() {
+        let mut park = Park::new("Clearing", 32, 32, 5).unwrap();
+        let built = park
+            .facilities()
+            .iter()
+            .find_map(|(tile, facility)| facility.map(|facility| (tile, facility)))
+            .expect("a new park comes with something on it");
+
+        assert_eq!(park.demolish(built.0), Some(built.1));
+        assert_eq!(park.demolish(built.0), None, "it was already gone");
+        assert!(park.can_build(built.0, Facility::Bench));
     }
 
     #[test]

@@ -73,6 +73,18 @@ impl Needs {
     /// The energy below which the same happens.
     const TOO_TIRED: f32 = 0.3;
 
+    /// The hunger at which a guest starts looking for something to eat.
+    ///
+    /// Deliberately below [`Needs::TOO_HUNGRY`]: a guest that only went looking
+    /// once it was miserable would never find a stall in time.
+    const WANTS_FOOD: f32 = 0.35;
+
+    /// The energy at which a guest starts looking for somewhere to sit.
+    const WANTS_A_SIT_DOWN: f32 = 0.5;
+
+    /// How much better a guest feels for having what it wanted.
+    const SATISFACTION: f32 = 0.15;
+
     /// The happiness at which a guest gives up on the day and heads home.
     const FED_UP: f32 = 0.3;
 
@@ -102,6 +114,47 @@ impl Needs {
             Self::rate(Self::TICKS_UNTIL_DELIGHTED)
         };
         self.happiness = (self.happiness + mood).clamp(0.0, 1.0);
+    }
+
+    /// Whether the guest would like something to eat.
+    ///
+    /// ```
+    /// # use openpark::park::Needs;
+    /// let mut needs = Needs::fresh();
+    /// assert!(!needs.wants_food(), "nobody arrives hungry");
+    ///
+    /// for _ in 0..Needs::TICKS_UNTIL_HUNGRY / 2 {
+    ///     needs.wear_down(true);
+    /// }
+    /// assert!(needs.wants_food());
+    ///
+    /// needs.eat();
+    /// assert!(!needs.wants_food());
+    /// ```
+    pub fn wants_food(self) -> bool {
+        self.hunger > Self::WANTS_FOOD
+    }
+
+    /// Whether the guest would like to sit down.
+    pub fn wants_a_sit_down(self) -> bool {
+        self.energy < Self::WANTS_A_SIT_DOWN
+    }
+
+    /// A meal: no longer hungry, and pleased about it.
+    pub fn eat(&mut self) {
+        self.hunger = 0.0;
+        self.cheer_up();
+    }
+
+    /// A sit down: back on its feet, and pleased about it.
+    pub fn rest(&mut self) {
+        self.energy = 1.0;
+        self.cheer_up();
+    }
+
+    /// The lift from getting what you wanted.
+    fn cheer_up(&mut self) {
+        self.happiness = (self.happiness + Self::SATISFACTION).min(1.0);
     }
 
     /// Whether the guest wants something it cannot have — which, until there
@@ -263,6 +316,73 @@ mod tests {
                     "{name} reached {value} after {tick} ticks"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn a_guest_goes_looking_before_it_gets_desperate() {
+        let mut needs = Needs::fresh();
+        let mut looked_for_food = None;
+        let mut suffered = None;
+
+        for tick in 0..Needs::TICKS_UNTIL_HUNGRY {
+            needs.wear_down(true);
+            if looked_for_food.is_none() && needs.wants_food() {
+                looked_for_food = Some(tick);
+            }
+            if suffered.is_none() && needs.is_suffering() {
+                suffered = Some(tick);
+            }
+        }
+
+        assert!(
+            looked_for_food.unwrap() < suffered.unwrap(),
+            "a guest only went looking for food once it was already miserable"
+        );
+    }
+
+    #[test]
+    fn eating_settles_hunger_and_lifts_the_mood() {
+        let mut needs = after(Needs::TICKS_UNTIL_HUNGRY);
+        let mood = needs.happiness();
+
+        needs.eat();
+        assert_eq!(needs.hunger(), 0.0);
+        assert!(needs.happiness() > mood);
+    }
+
+    #[test]
+    fn sitting_down_restores_the_feet_and_lifts_the_mood() {
+        let mut needs = after(Needs::TICKS_UNTIL_HUNGRY);
+        let mood = needs.happiness();
+
+        needs.rest();
+        assert_eq!(needs.energy(), 1.0);
+        assert!(needs.happiness() > mood);
+    }
+
+    #[test]
+    fn being_pleased_never_takes_a_guest_past_delighted() {
+        let mut needs = Needs::fresh();
+        for _ in 0..100 {
+            needs.eat();
+            needs.rest();
+        }
+        assert_eq!(needs.happiness(), 1.0);
+    }
+
+    #[test]
+    fn a_park_that_feeds_its_guests_keeps_them() {
+        let mut needs = Needs::fresh();
+        for _ in 0..200_000 {
+            needs.wear_down(true);
+            if needs.wants_food() {
+                needs.eat();
+            }
+            if needs.wants_a_sit_down() {
+                needs.rest();
+            }
+            assert!(!needs.is_fed_up(), "a well-served guest gave up anyway");
         }
     }
 
