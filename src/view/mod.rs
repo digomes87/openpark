@@ -3,13 +3,14 @@
 //! Everything here goes through [`isogrid::render::Renderer`], so the whole
 //! view can be tested against a recording renderer without opening a window.
 
+mod facility;
 mod guest;
 
 use isogrid::camera::Camera;
 use isogrid::iso::{ScreenPoint, TilePos};
 use isogrid::render::{draw_tiles, Color, Renderer, TileShape};
 
-use crate::park::Park;
+use crate::park::{Facility, Park};
 
 /// The colour behind everything, where there is no park.
 const SKY: Color = Color::hex(0x1B_26_33);
@@ -35,6 +36,7 @@ const HUD_SIZE: f32 = 20.0;
 pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, hovered: Option<TilePos>) {
     canvas.clear(SKY);
     draw_land(canvas, park, camera);
+    facility::draw_facilities(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
 
     if let Some(tile) = hovered {
@@ -55,7 +57,13 @@ fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
         // without looking like a lighting bug.
         #[allow(clippy::cast_precision_loss)]
         let along = (tile.x + tile.y) as f32 / depth;
-        Some(terrain.colour().shaded(0.85 + along * 0.15))
+
+        // The floor of a stall is its own colour, so that what is built reads
+        // even at a zoom where its posts are a couple of pixels.
+        let colour = park
+            .facility_at(tile)
+            .map_or_else(|| terrain.colour(), Facility::colour);
+        Some(colour.shaded(0.85 + along * 0.15))
     });
 }
 
@@ -77,10 +85,8 @@ fn tile_shape(camera: &Camera, tile: TilePos) -> TileShape {
 
 /// Draws the status lines in the corner.
 fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, hovered: Option<TilePos>) {
-    let under_pointer = hovered.map_or_else(
-        || "—".to_owned(),
-        |tile| format!("{:?} at {}, {}", park.terrain()[tile], tile.x, tile.y),
-    );
+    let under_pointer =
+        hovered.map_or_else(|| "—".to_owned(), |tile| facility::describe(park, tile));
 
     let lines = [
         park.name().to_owned(),
@@ -212,6 +218,57 @@ mod tests {
         assert!(texts(&canvas)
             .iter()
             .any(|line| line.starts_with("Happiness: ") && line.ends_with('%')));
+    }
+
+    #[test]
+    fn what_is_built_is_drawn_under_the_crowd() {
+        let mut park = Park::new("Test Park", 32, 32, 5).expect("a valid park");
+        for _ in 0..600 {
+            park.tick_once();
+        }
+        let mut camera = Camera::new(TileSize::CLASSIC, Viewport::new(1600.0, 1200.0).unwrap());
+        camera.look_at(TilePos::new(16, 16).centre());
+
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &park, &camera, None);
+
+        let built = park
+            .facilities()
+            .iter()
+            .filter(|(_, facility)| facility.is_some())
+            .count();
+        let drawn: Vec<usize> = canvas
+            .commands()
+            .iter()
+            .enumerate()
+            .filter_map(|(at, command)| matches!(command, Command::Line(..)).then_some(at))
+            .collect();
+
+        // Three lines for each facility, and they come before the crowd's.
+        assert!(drawn.len() > built * 3, "the crowd was not drawn as well");
+        assert!(
+            drawn.windows(2).all(|pair| pair[0] < pair[1]),
+            "the drawing order is not what it looks like"
+        );
+    }
+
+    #[test]
+    fn the_hud_names_what_is_built_under_the_pointer() {
+        let (park, camera) = fixture();
+        let built = park
+            .facilities()
+            .iter()
+            .find_map(|(tile, facility)| facility.map(|facility| (tile, facility)));
+
+        let Some((tile, facility)) = built else {
+            return;
+        };
+
+        let mut canvas = Recorder::new();
+        draw(&mut canvas, &park, &camera, Some(tile));
+        assert!(texts(&canvas)
+            .iter()
+            .any(|line| line.starts_with(facility.name())));
     }
 
     #[test]
