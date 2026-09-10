@@ -23,5 +23,8 @@
 //! ```
 
 pub mod app;
+pub mod cli;
 pub mod park;
+pub mod screenshot;
+pub mod tool;
 pub mod view;
