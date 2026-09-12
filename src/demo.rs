@@ -77,7 +77,7 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
 mod tests {
     use super::*;
 
-    use crate::park::{Ride, RideState};
+    use crate::park::RideState;
 
     #[test]
     fn the_demo_coaster_is_a_working_coaster() {
