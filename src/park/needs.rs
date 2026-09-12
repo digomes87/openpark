@@ -28,6 +28,7 @@ pub struct Needs {
     hunger: f32,
     energy: f32,
     happiness: f32,
+    boredom: f32,
 }
 
 impl Needs {
@@ -46,6 +47,12 @@ impl Needs {
         self.happiness
     }
 
+    /// How badly the guest wants something to actually *do*, from 0 (just got
+    /// off something) to 1 (has seen enough scenery for one day).
+    pub const fn boredom(self) -> f32 {
+        self.boredom
+    }
+
     /// How many ticks of walking it takes to go from fed to starving.
     ///
     /// Five minutes at [`isogrid::time::TickRate::CLASSIC`]. Long enough that a
@@ -55,6 +62,12 @@ impl Needs {
 
     /// How many ticks of walking it takes to wear a guest out completely.
     const TICKS_UNTIL_EXHAUSTED: u32 = 16_000;
+
+    /// How many ticks it takes a guest to run out of things to look at.
+    ///
+    /// Faster than hunger: wanting a ride is the first thing a guest wants,
+    /// which is the right way round for a theme park.
+    pub const TICKS_UNTIL_BORED: u32 = 6_000;
 
     /// How many ticks a guest with everything it needs takes to cheer up fully.
     const TICKS_UNTIL_DELIGHTED: u32 = 20_000;
@@ -82,6 +95,12 @@ impl Needs {
     /// The energy at which a guest starts looking for somewhere to sit.
     const WANTS_A_SIT_DOWN: f32 = 0.5;
 
+    /// The boredom at which a guest goes looking for a ride.
+    const WANTS_A_RIDE: f32 = 0.3;
+
+    /// How rough a ride has to be before it stops being fun.
+    const TOO_ROUGH: f32 = 0.8;
+
     /// How much better a guest feels for having what it wanted.
     const SATISFACTION: f32 = 0.15;
 
@@ -95,6 +114,7 @@ impl Needs {
             hunger: 0.0,
             energy: 1.0,
             happiness: 0.8,
+            boredom: 0.0,
         }
     }
 
@@ -107,6 +127,7 @@ impl Needs {
 
         self.hunger = (self.hunger + Self::rate(Self::TICKS_UNTIL_HUNGRY) * effort).min(1.0);
         self.energy = (self.energy - Self::rate(Self::TICKS_UNTIL_EXHAUSTED) * effort).max(0.0);
+        self.boredom = (self.boredom + Self::rate(Self::TICKS_UNTIL_BORED)).min(1.0);
 
         let mood = if self.is_suffering() {
             -Self::rate(Self::TICKS_UNTIL_MISERABLE)
@@ -140,6 +161,22 @@ impl Needs {
         self.energy < Self::WANTS_A_SIT_DOWN
     }
 
+    /// Whether the guest would like to go on something.
+    ///
+    /// ```
+    /// # use openpark::park::Needs;
+    /// let mut needs = Needs::fresh();
+    /// assert!(!needs.wants_a_ride(), "nobody wants a ride at the gate");
+    ///
+    /// for _ in 0..Needs::TICKS_UNTIL_BORED {
+    ///     needs.wear_down(true);
+    /// }
+    /// assert!(needs.wants_a_ride());
+    /// ```
+    pub fn wants_a_ride(self) -> bool {
+        self.boredom > Self::WANTS_A_RIDE
+    }
+
     /// A meal: no longer hungry, and pleased about it.
     pub fn eat(&mut self) {
         self.hunger = 0.0;
@@ -150,6 +187,32 @@ impl Needs {
     pub fn rest(&mut self) {
         self.energy = 1.0;
         self.cheer_up();
+    }
+
+    /// A ride, as exciting and as rough as it turned out to be.
+    ///
+    /// Boredom goes whatever it was like — a bad ride is still something that
+    /// happened — but the mood only lifts with the excitement, and a ride rough
+    /// enough to frighten somebody takes some of that back.
+    ///
+    /// ```
+    /// # use openpark::park::Needs;
+    /// let mut gentle = Needs::fresh();
+    /// let mut brutal = Needs::fresh();
+    ///
+    /// gentle.enjoy_a_ride(0.8, 0.2);
+    /// brutal.enjoy_a_ride(0.8, 1.0);
+    /// assert!(gentle.happiness() > brutal.happiness(), "being shaken about is not fun");
+    /// assert!(!gentle.wants_a_ride() && !brutal.wants_a_ride(), "both had a go");
+    /// ```
+    pub fn enjoy_a_ride(&mut self, excitement: f32, intensity: f32) {
+        self.boredom = 0.0;
+
+        let thrill = excitement.clamp(0.0, 1.0) * Self::SATISFACTION * 2.0;
+        let fright =
+            (intensity.clamp(0.0, 1.0) - Self::TOO_ROUGH).max(0.0) * Self::SATISFACTION * 4.0;
+
+        self.happiness = (self.happiness + thrill - fright).clamp(0.0, 1.0);
     }
 
     /// The lift from getting what you wanted.
@@ -188,12 +251,12 @@ impl Needs {
         self.happiness = (self.happiness + amount).clamp(0.0, 1.0);
     }
 
-    /// Whether the guest wants something it cannot have.
+    /// Whether nothing in the park is answering what the guest wants.
     ///
     /// The slow way a mood goes down. [`Needs::dislike`] is the sharp one: a
     /// price over the odds, or ground worn down to bare earth.
     pub fn is_suffering(self) -> bool {
-        self.hunger > Self::TOO_HUNGRY || self.energy < Self::TOO_TIRED
+        self.hunger > Self::TOO_HUNGRY || self.energy < Self::TOO_TIRED || self.boredom >= 1.0
     }
 
     /// Whether the guest has had enough and wants to go home.
@@ -281,11 +344,13 @@ mod tests {
 
         let mut delighted = Needs::fresh();
         for _ in 0..Needs::TICKS_UNTIL_DELIGHTED {
-            // Kept fed and rested by hand: the mood should stop at the top.
+            // Kept fed, rested and entertained by hand: the mood should stop at
+            // the top rather than climb past it.
             delighted.wear_down(false);
             delighted = Needs {
                 hunger: 0.0,
                 energy: 1.0,
+                boredom: 0.0,
                 ..delighted
             };
         }
@@ -405,7 +470,7 @@ mod tests {
     }
 
     #[test]
-    fn a_park_that_feeds_its_guests_keeps_them() {
+    fn a_park_that_feeds_and_entertains_its_guests_keeps_them() {
         let mut needs = Needs::fresh();
         for _ in 0..200_000 {
             needs.wear_down(true);
@@ -415,8 +480,31 @@ mod tests {
             if needs.wants_a_sit_down() {
                 needs.rest();
             }
+            if needs.wants_a_ride() {
+                needs.enjoy_a_ride(0.6, 0.4);
+            }
             assert!(!needs.is_fed_up(), "a well-served guest gave up anyway");
         }
+    }
+
+    #[test]
+    fn a_park_with_nothing_to_ride_bores_its_guests_out() {
+        let mut needs = Needs::fresh();
+        for _ in 0..200_000 {
+            needs.wear_down(true);
+            // Fed and rested, and nothing whatsoever to do.
+            if needs.wants_food() {
+                needs.eat();
+            }
+            if needs.wants_a_sit_down() {
+                needs.rest();
+            }
+        }
+
+        assert!(
+            needs.is_fed_up(),
+            "a guest who saw nothing all day was perfectly happy about it"
+        );
     }
 
     #[test]

@@ -14,9 +14,13 @@ categories = ["games"]
 publish = false
 
 [dependencies]
-# Tracked from the engine's `main` until its first crates.io release, at which
+# Tracked from the engine by git until its first crates.io release, at which
 # point the `git` key goes away and the version constraint stays.
-isogrid = { version = "0.1", git = "https://github.com/digomes87/isogrid", branch = "main", features = [
+#
+# On feat/number-keys rather than main until isogrid#14 lands: the toolbar is
+# bound to the number row, which the engine only reports on that branch. Back to
+# "main" the moment it is merged.
+isogrid = { version = "0.1", git = "https://github.com/digomes87/isogrid", branch = "feat/number-keys", features = [
   "macroquad-backend",
   "serde",
 ] }

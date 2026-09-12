@@ -42,6 +42,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   below it, and everybody — guests, staff, buildings — stands on top of it.
   Hover picking follows the hills.
 
+- The track builder. `Track` is a starting tile, a heading and a list of pieces;
+  nine pieces, including a chain lift, brakes and driven track. `Track::push`
+  refuses track that leaves the park's height range or crosses itself, and
+  `Track::is_a_circuit` is what a ride has to satisfy before it can run.
+- Ride physics. A train is a place on the layout and a speed, changed only by
+  gravity, rolling resistance, the lift, the brakes and the station. `Ride::test`
+  sends one round before anybody is let on and refuses a layout that stalls, and
+  what it finds becomes the ride's excitement and intensity.
+- Rides in the park: built piece by piece and paid for per piece, priced like
+  shops, queued for, ridden and paid for as guests board. They wear out, break
+  down, and wait for a mechanic — the third member of staff.
+- `Needs::boredom`: the need a theme park answers. A park with nothing to ride
+  empties out however well it feeds people.
+- Toolbars on the number row, one per family, with the space bar walking along
+  the one in hand. The arrow keys point a new ride while that tool is held.
+- `view::ride` draws rails, supports under raised track, platforms and trains,
+  coloured by what the ride is doing.
+- `--coaster` lays the demo ride the README picture shows.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

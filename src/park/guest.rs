@@ -10,7 +10,7 @@ use isogrid::render::Color;
 use isogrid::time::Tick;
 use serde::{Deserialize, Serialize};
 
-use crate::park::{Facility, Money, Needs, Shop, Walk};
+use crate::park::{Facility, Money, Needs, Ride, Shop, Walk};
 
 /// The shirts guests turn up in.
 ///
@@ -36,6 +36,10 @@ pub enum Plan {
     Visiting { facility: TilePos },
     /// Standing at `facility`, busy until `until`.
     Using { facility: TilePos, until: Tick },
+    /// On the way to ride `ride`, which it will board from beside `station`.
+    Queueing { ride: u32, station: TilePos },
+    /// Aboard `ride`, and out of the park's way until it comes back round.
+    Riding { ride: u32 },
     /// On the way to the gate, and out of the park once it gets there.
     GoingHome,
 }
@@ -45,7 +49,15 @@ impl Plan {
     pub const fn facility(self) -> Option<TilePos> {
         match self {
             Self::Visiting { facility } | Self::Using { facility, .. } => Some(facility),
-            Self::Wandering | Self::GoingHome => None,
+            Self::Wandering | Self::GoingHome | Self::Queueing { .. } | Self::Riding { .. } => None,
+        }
+    }
+
+    /// The ride this plan is about, if it is about one.
+    pub const fn ride(self) -> Option<u32> {
+        match self {
+            Self::Queueing { ride, .. } | Self::Riding { ride } => Some(ride),
+            Self::Wandering | Self::Visiting { .. } | Self::Using { .. } | Self::GoingHome => None,
         }
     }
 }
@@ -96,6 +108,12 @@ impl Guest {
     /// What a guest will pay for something over the odds without doing the
     /// arithmetic, whatever the thing normally costs.
     const ODD_COINS: Money = 3;
+
+    /// What a guest would pay for the most exciting ride imaginable.
+    ///
+    /// Everything else is a fraction of it, by excitement — so the way to
+    /// charge more is to build something better rather than to put the price up.
+    const WORTH_OF_A_THRILL: Money = 40;
 
     /// The least and the most a guest will pay over the fair price, as a
     /// multiple of it.
@@ -192,6 +210,46 @@ impl Guest {
         self.plan == Plan::GoingHome
     }
 
+    /// The ride the guest is aboard, if it is aboard one.
+    ///
+    /// A guest on a ride is not on the map: it does not walk, it is not drawn,
+    /// and nothing can be built under it until it gets off.
+    pub const fn riding(&self) -> Option<u32> {
+        match self.plan {
+            Plan::Riding { ride } => Some(ride),
+            _ => None,
+        }
+    }
+
+    /// Puts the guest back on its feet beside the station.
+    ///
+    /// Used both when a ride brings it back and when the ride it was on is
+    /// demolished underneath it.
+    pub fn get_off(&mut self) {
+        if self.riding().is_some() {
+            self.plan = Plan::Wandering;
+        }
+    }
+
+    /// Takes `price` off the guest, if it can pay.
+    ///
+    /// Returns what was actually handed over, which is nothing at all when the
+    /// guest cannot afford it.
+    pub fn pay(&mut self, price: Money) -> Money {
+        if !self.can_afford(price) {
+            return 0;
+        }
+
+        self.money -= price;
+        price
+    }
+
+    /// Rides something as exciting and as rough as `excitement` and
+    /// `intensity`.
+    pub fn enjoy_a_ride(&mut self, excitement: f32, intensity: f32) {
+        self.needs.enjoy_a_ride(excitement, intensity);
+    }
+
     /// Changes the guest's mind.
     ///
     /// A guest that has decided to go home stays decided: a park with nothing
@@ -210,6 +268,15 @@ impl Guest {
         if self.plan != Plan::GoingHome {
             self.plan = plan;
         }
+    }
+
+    /// Changes the guest's mind even if it had decided to go home.
+    ///
+    /// For the park putting somebody on a ride or taking them off one, which
+    /// happens to whoever is standing there regardless of what they had
+    /// planned.
+    pub fn decide_anyway(&mut self, plan: Plan) {
+        self.plan = plan;
     }
 
     /// What the guest has left to spend.
@@ -288,6 +355,47 @@ impl Guest {
     /// ```
     pub fn will_pay(&self, shop: &Shop) -> bool {
         self.can_afford(shop.price()) && shop.price() <= self.most_it_would_pay(shop.kind())
+    }
+
+    /// Whether this guest would queue for `ride` at what it charges.
+    ///
+    /// What a ride is worth is what it is like: a guest will pay a good deal for
+    /// something exciting and almost nothing for a circle of flat track, which
+    /// is the whole reason to build something worth riding.
+    ///
+    /// ```
+    /// # use openpark::park::{Guest, Heading, Ride, Track, TrackPiece};
+    /// # use isogrid::iso::TilePos;
+    /// # let mut track = Track::starting_at(TilePos::new(4, 4), Heading::North, 0);
+    /// # for side in [
+    /// #     [TrackPiece::Station, TrackPiece::LiftHill],
+    /// #     [TrackPiece::LiftHill, TrackPiece::LiftHill],
+    /// #     [TrackPiece::SlopeDown, TrackPiece::SlopeDown],
+    /// #     [TrackPiece::SlopeDown, TrackPiece::Brakes],
+    /// # ] {
+    /// #     track.push(TrackPiece::CurveRight)?;
+    /// #     for piece in side { track.push(piece)?; }
+    /// # }
+    /// let mut ride = Ride::new(0, "The Coaster", track);
+    /// ride.test()?;
+    ///
+    /// let guest = Guest::arriving(1, TilePos::ORIGIN, 0, 200);
+    /// ride.set_price(5);
+    /// assert!(guest.will_ride(&ride), "a fiver for a coaster is a bargain");
+    ///
+    /// ride.set_price(Ride::MAX_PRICE);
+    /// assert!(!guest.will_ride(&ride), "nobody pays that");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn will_ride(&self, ride: &Ride) -> bool {
+        let Some(stats) = ride.stats() else {
+            return false;
+        };
+
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+        let worth = (stats.excitement * Self::WORTH_OF_A_THRILL as f32 * self.tolerance) as Money;
+
+        self.can_afford(ride.price()) && ride.price() <= worth.max(Self::ODD_COINS)
     }
 
     /// Something about the park spoils the visit a little.

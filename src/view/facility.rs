@@ -77,6 +77,27 @@ fn draw_facility(canvas: &mut dyn Renderer, base: ScreenPoint, scale: f32, facil
 /// Whoever is standing on the tile comes first, then whatever is built on it
 /// with the price on its board and what it has taken, then the bare ground.
 pub fn describe(park: &Park, tile: TilePos) -> String {
+    if let Some(ride) = park.ride_at(tile) {
+        let stats = ride.stats().map_or_else(
+            || "not tested".to_owned(),
+            |stats| {
+                format!(
+                    "excitement {:.0}%, intensity {:.0}%",
+                    stats.excitement * 100.0,
+                    stats.intensity * 100.0
+                )
+            },
+        );
+
+        return format!(
+            "{} — {:?}, {} each, {stats}, {} ridden",
+            ride.name(),
+            ride.state(),
+            ride.price(),
+            ride.riders()
+        );
+    }
+
     if let Some(member) = park.staff().iter().find(|member| member.tile() == tile) {
         return format!(
             "{} at {}, {} — {} a bill",
