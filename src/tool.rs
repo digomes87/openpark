@@ -1,6 +1,6 @@
 //! What the mouse does when you click.
 
-use crate::park::Facility;
+use crate::park::{Facility, Shop, StaffKind};
 
 /// The thing the pointer is currently holding.
 ///
@@ -15,15 +15,29 @@ pub enum Tool {
     Build(Facility),
     /// Clicking takes down whatever is on the tile under the pointer.
     Demolish,
+    /// Clicking puts the price of the shop under the pointer up a step.
+    RaisePrice,
+    /// Clicking brings it down a step.
+    LowerPrice,
+    /// Clicking takes somebody on. They start at the gate, not under the
+    /// pointer: the park hires them, it does not place them.
+    Hire(StaffKind),
+    /// Clicking lets go of whoever is standing under the pointer.
+    Fire,
 }
 
 impl Tool {
     /// Every tool, in the order the space bar walks through them.
-    pub const ORDER: [Self; 4] = [
+    pub const ORDER: [Self; 9] = [
         Self::Inspect,
         Self::Build(Facility::FoodStall),
         Self::Build(Facility::Bench),
         Self::Demolish,
+        Self::RaisePrice,
+        Self::LowerPrice,
+        Self::Hire(StaffKind::Handyman),
+        Self::Hire(StaffKind::Entertainer),
+        Self::Fire,
     ];
 
     /// The next tool along, wrapping back to [`Tool::Inspect`].
@@ -46,7 +60,15 @@ impl Tool {
     pub const fn facility(self) -> Option<Facility> {
         match self {
             Self::Build(facility) => Some(facility),
-            Self::Inspect | Self::Demolish => None,
+            _ => None,
+        }
+    }
+
+    /// Who it is hiring, if it is hiring anybody.
+    pub const fn staff(self) -> Option<StaffKind> {
+        match self {
+            Self::Hire(kind) => Some(kind),
+            _ => None,
         }
     }
 
@@ -63,6 +85,10 @@ impl Tool {
                 format!("Build {} ({})", facility.name(), facility.build_cost())
             }
             Self::Demolish => "Demolish".to_owned(),
+            Self::RaisePrice => format!("Put the price up (+{})", Shop::PRICE_STEP),
+            Self::LowerPrice => format!("Bring the price down (-{})", Shop::PRICE_STEP),
+            Self::Hire(kind) => format!("Hire {} ({})", kind.name(), kind.hire_cost()),
+            Self::Fire => "Let somebody go".to_owned(),
         }
     }
 }
@@ -103,10 +129,37 @@ mod tests {
     fn only_a_building_tool_is_building_something() {
         assert_eq!(Tool::Inspect.facility(), None);
         assert_eq!(Tool::Demolish.facility(), None);
+        assert_eq!(Tool::RaisePrice.facility(), None);
         assert_eq!(
             Tool::Build(Facility::Bench).facility(),
             Some(Facility::Bench)
         );
+    }
+
+    #[test]
+    fn only_a_hiring_tool_is_hiring_somebody() {
+        assert_eq!(Tool::Inspect.staff(), None);
+        assert_eq!(Tool::Fire.staff(), None);
+        assert_eq!(
+            Tool::Hire(StaffKind::Handyman).staff(),
+            Some(StaffKind::Handyman)
+        );
+    }
+
+    #[test]
+    fn everything_that_can_be_built_or_hired_is_in_the_cycle() {
+        for facility in Facility::ALL {
+            assert!(
+                Tool::ORDER.contains(&Tool::Build(facility)),
+                "{facility:?} cannot be built with the mouse"
+            );
+        }
+        for kind in StaffKind::ALL {
+            assert!(
+                Tool::ORDER.contains(&Tool::Hire(kind)),
+                "{kind:?} cannot be hired with the mouse"
+            );
+        }
     }
 
     #[test]
@@ -118,6 +171,11 @@ mod tests {
             if let Some(facility) = tool.facility() {
                 assert!(label.contains(facility.name()));
                 assert!(label.contains(&facility.build_cost().to_string()));
+            }
+
+            if let Some(kind) = tool.staff() {
+                assert!(label.contains(kind.name()));
+                assert!(label.contains(&kind.hire_cost().to_string()));
             }
         }
     }

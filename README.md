@@ -22,12 +22,24 @@ Early, and playable enough to watch. Generated land, a camera you can pan and
 zoom, guests who come through the gate, pay their admission, wander the paths,
 get hungry and footsore, queue at a food stall or drop onto a bench — and go
 home unhappy if the park has nothing to offer them. You can put up stalls and
-benches yourself, and take them down again. Rides are the next step — see the
-[roadmap](#roadmap).
+benches yourself, take them down again, set what each one charges, hire staff to
+keep the place tidy and the crowd cheerful — and run the whole thing into the
+ground, because the bank closes a park that stays past its overdraft. Rides are
+the next step — see the [roadmap](#roadmap).
 
 Every guest carries a coloured pip: green when the visit is going well, red when
 it is not. A park in trouble is visible from across the map before the number in
 the corner says so.
+
+Money is the other half of it. Every stall has its own price, and every guest its
+own idea of what a meal is worth: charge over the odds and the stall goes
+ignored, charge well over and the guests who do pay resent it. Wages and upkeep
+come out of the bank every thirty seconds whether anybody turned up or not, and a
+park that owes more than it can cover stops selling tickets for good.
+
+The crowd wears its own shortcuts into the grass, and a handyman walks them back
+to lawn — slower than a busy park ruins them, which is what makes hiring a second
+one a decision.
 
 ![A food stall close up, with guests queuing beside it and a bench along the
 path](docs/images/stall.png)
@@ -60,7 +72,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `Space` | Cycle the tool: look, build a stall, build a bench, demolish |
+| `Space` | Cycle the tool: look, build, demolish, price up, price down, hire, fire |
 | Left click | Use the tool on the tile under the pointer |
 | `Esc` | Put the tool down, or quit when empty-handed |
 
@@ -88,8 +100,8 @@ Two repositories, with the dependency pointing one way only:
 - **[isogrid](https://github.com/digomes87/isogrid)** — the engine. Isometric
   projection, tile grids, camera, a deterministic fixed-timestep clock, A\*
   pathfinding, and rendering behind a trait. It knows nothing about parks.
-- **openpark** — this repository. Land, money, and eventually rides, guests and
-  everything that makes it a game.
+- **openpark** — this repository. Land, money, guests, staff, and eventually
+  rides and everything else that makes it a game.
 
 The split is strict: if a type in the engine ever mentions a ride or a guest,
 something has gone wrong. See [`ARCHITECTURE.md`](ARCHITECTURE.md).
@@ -105,8 +117,8 @@ code — be tested without opening a window.
 - [x] Guest needs: hunger, energy, happiness
 - [x] Food stalls and benches, and guests who spend money at them
 - [x] Building and demolishing them yourself, with the mouse
+- [x] Shops, prices, staff and a park that can go bankrupt
 - [ ] The track builder and ride physics
-- [ ] Shops, prices, staff and a park that can go bankrupt
 - [ ] Terrain editing
 - [ ] Save and load
 

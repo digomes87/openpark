@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::Facility;
+use crate::park::{Facility, StaffKind};
 use crate::tool::Tool;
 
 /// How the game was asked to start.
@@ -52,7 +52,8 @@ openpark — a park simulator
     --zoom F            zoom to take the screenshot at
     --focus X,Y         tile to centre the view on
     --hover X,Y         tile to pretend the pointer is over
-    --tool NAME         inspect, stall, bench or demolish
+    --tool NAME         inspect, stall, bench, demolish, raise, lower,
+                        handyman, entertainer or fire
     -h, --help          print this
 ";
 
@@ -160,6 +161,11 @@ fn tool(value: &str) -> Result<Tool> {
         "stall" => Ok(Tool::Build(Facility::FoodStall)),
         "bench" => Ok(Tool::Build(Facility::Bench)),
         "demolish" => Ok(Tool::Demolish),
+        "raise" => Ok(Tool::RaisePrice),
+        "lower" => Ok(Tool::LowerPrice),
+        "handyman" => Ok(Tool::Hire(StaffKind::Handyman)),
+        "entertainer" => Ok(Tool::Hire(StaffKind::Entertainer)),
+        "fire" => Ok(Tool::Fire),
         other => anyhow::bail!("--tool does not know {other:?}"),
     }
 }

@@ -157,8 +157,41 @@ impl Needs {
         self.happiness = (self.happiness + Self::SATISFACTION).min(1.0);
     }
 
-    /// Whether the guest wants something it cannot have — which, until there
-    /// are shops and benches, is the only way a mood goes down.
+    /// Something about the park puts the guest off, by `amount` of mood.
+    ///
+    /// Being overcharged and walking across worn-out ground both land here: the
+    /// guest does not stop wanting what it wanted, it just enjoys the day a
+    /// little less. A negative amount is ignored — [`Needs::enjoy_yourself`] is
+    /// how a mood goes up.
+    ///
+    /// ```
+    /// # use openpark::park::Needs;
+    /// let mut needs = Needs::fresh();
+    /// let before = needs.happiness();
+    /// needs.dislike(0.1);
+    /// assert!(needs.happiness() < before);
+    /// ```
+    pub fn dislike(&mut self, amount: f32) {
+        if amount.is_nan() || amount <= 0.0 {
+            return;
+        }
+        self.happiness = (self.happiness - amount).clamp(0.0, 1.0);
+    }
+
+    /// Something about the park is a treat, by `amount` of mood.
+    ///
+    /// What an entertainer does to the crowd walking past them.
+    pub fn enjoy_yourself(&mut self, amount: f32) {
+        if amount.is_nan() || amount <= 0.0 {
+            return;
+        }
+        self.happiness = (self.happiness + amount).clamp(0.0, 1.0);
+    }
+
+    /// Whether the guest wants something it cannot have.
+    ///
+    /// The slow way a mood goes down. [`Needs::dislike`] is the sharp one: a
+    /// price over the odds, or ground worn down to bare earth.
     pub fn is_suffering(self) -> bool {
         self.hunger > Self::TOO_HUNGRY || self.energy < Self::TOO_TIRED
     }
@@ -391,5 +424,45 @@ mod tests {
         let needs = after(500);
         let json = serde_json::to_string(&needs).unwrap();
         assert_eq!(serde_json::from_str::<Needs>(&json).unwrap(), needs);
+    }
+    #[test]
+    fn being_put_off_lowers_the_mood_and_being_pleased_raises_it() {
+        let mut needs = Needs::fresh();
+        let arrived_at = needs.happiness();
+
+        needs.dislike(0.2);
+        assert!(needs.happiness() < arrived_at);
+
+        needs.enjoy_yourself(0.2);
+        assert!(
+            (needs.happiness() - arrived_at).abs() < 1e-6,
+            "back where it was"
+        );
+    }
+
+    #[test]
+    fn a_mood_never_leaves_its_range() {
+        let mut needs = Needs::fresh();
+        for _ in 0..100 {
+            needs.dislike(0.5);
+        }
+        assert_eq!(needs.happiness(), 0.0);
+
+        for _ in 0..100 {
+            needs.enjoy_yourself(0.5);
+        }
+        assert_eq!(needs.happiness(), 1.0);
+    }
+
+    #[test]
+    fn a_nonsense_amount_of_mood_changes_nothing() {
+        let mut needs = Needs::fresh();
+        let arrived_at = needs.happiness();
+
+        needs.dislike(f32::NAN);
+        needs.dislike(-1.0);
+        needs.enjoy_yourself(f32::NAN);
+        needs.enjoy_yourself(-1.0);
+        assert_eq!(needs.happiness(), arrived_at);
     }
 }

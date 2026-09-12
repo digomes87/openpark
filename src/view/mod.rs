@@ -5,6 +5,7 @@
 
 mod facility;
 mod guest;
+mod staff;
 
 use isogrid::camera::Camera;
 use isogrid::iso::{ScreenPoint, TilePos};
@@ -22,6 +23,9 @@ const HIGHLIGHT: Color = Color::rgba(255, 255, 255, 60);
 /// A tile a tool would change, and one it would refuse.
 const ALLOWED: Color = Color::rgba(120, 230, 120, 90);
 const REFUSED: Color = Color::rgba(230, 90, 90, 90);
+
+/// The colour the cash line turns once the park owes more than it has.
+const IN_THE_RED: Color = Color::hex(0xE8_6A_5A);
 
 /// Text and its drop shadow.
 const TEXT: Color = Color::hex(0xF2_EF_E6);
@@ -54,6 +58,7 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
+    staff::draw_staff(canvas, park, camera);
 
     if let Some(tile) = overlay.hovered {
         draw_highlight(canvas, camera, tile, overlay.tool, park);
@@ -104,7 +109,11 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
     let allowed = match tool {
         Tool::Inspect => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
-        Tool::Demolish => park.facility_at(tile).is_some(),
+        Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
+        // Hiring happens at the gate, so every tile is as good as any other;
+        // what decides it is the bank balance.
+        Tool::Hire(kind) => !park.is_bankrupt() && park.cash() >= kind.hire_cost(),
+        Tool::Fire => park.staff().iter().any(|member| member.tile() == tile),
     };
 
     if allowed {
@@ -130,9 +139,20 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         .map_or_else(|| "—".to_owned(), |tile| facility::describe(park, tile));
 
     let lines = [
-        park.name().to_owned(),
+        if park.is_bankrupt() {
+            format!("{} — BANKRUPT", park.name())
+        } else {
+            park.name().to_owned()
+        },
         format!("Cash: {}", park.cash()),
+        format!(
+            "Bills: {} every {} ticks",
+            park.wage_bill(),
+            Park::TICKS_PER_WAGE_BILL
+        ),
+        format!("Takings: {}", park.takings()),
         format!("Guests: {}", park.guests().len()),
+        format!("Staff: {}", park.staff().len()),
         park.average_happiness().map_or_else(
             || "Happiness: —".to_owned(),
             |happiness| format!("Happiness: {:.0}%", happiness * 100.0),
@@ -149,9 +169,18 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         .into_iter()
         .chain(overlay.status.map(ToOwned::to_owned));
 
+    // The cash line is the one worth colouring: a park in debt should be
+    // obvious without reading the number.
+    let in_the_red = park.cash() < 0;
+
     for (i, line) in lines.enumerate() {
         #[allow(clippy::cast_precision_loss)]
         let y = HUD_MARGIN + HUD_SIZE + i as f32 * HUD_LINE;
+        let colour = if in_the_red && line.starts_with("Cash:") {
+            IN_THE_RED
+        } else {
+            TEXT
+        };
         // Drawn twice: a one-pixel shadow keeps the text readable over both the
         // pale paths and the dark water.
         canvas.text(
@@ -160,7 +189,7 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
             HUD_SIZE,
             TEXT_SHADOW,
         );
-        canvas.text(&line, ScreenPoint::new(HUD_MARGIN, y), HUD_SIZE, TEXT);
+        canvas.text(&line, ScreenPoint::new(HUD_MARGIN, y), HUD_SIZE, colour);
     }
 }
 
@@ -308,9 +337,9 @@ mod tests {
         let built = park
             .facilities()
             .iter()
-            .find_map(|(tile, facility)| facility.map(|facility| (tile, facility)));
+            .find_map(|(tile, built)| built.map(|shop| (tile, shop)));
 
-        let Some((tile, facility)) = built else {
+        let Some((tile, shop)) = built else {
             return;
         };
 
@@ -326,7 +355,7 @@ mod tests {
         );
         assert!(texts(&canvas)
             .iter()
-            .any(|line| line.starts_with(facility.name())));
+            .any(|line| line.starts_with(shop.kind().name())));
     }
 
     #[test]
