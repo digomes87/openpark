@@ -7,6 +7,7 @@ mod needs;
 mod shop;
 mod staff;
 mod terrain;
+mod track;
 mod walk;
 
 pub use facility::Facility;
@@ -16,6 +17,7 @@ pub use needs::Needs;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
+pub use track::{Heading, Segment, Track, TrackPiece};
 pub use walk::Walk;
 
 use core::num::NonZeroU32;
