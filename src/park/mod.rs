@@ -1001,6 +1001,10 @@ impl Park {
             !self.is_anybody_on(tile),
             "somebody is standing on {tile:?}",
         );
+        anyhow::ensure!(
+            self.ride_at(tile).is_none(),
+            "there is track across {tile:?}",
+        );
 
         Ok(())
     }
@@ -2579,5 +2583,235 @@ mod tests {
         let loaded: Park = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, park);
         assert_eq!(loaded.land().height_at(TilePos::new(7, 7)), Some(2));
+    }
+    /// A park with one tested, open coaster on flat dry ground beside the
+    /// crossroads, and the money to have built it.
+    fn park_with_a_coaster() -> (Park, u32) {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let corner = TilePos::new(18, 16);
+        for dy in 0..6 {
+            for dx in 0..6 {
+                let tile = corner.offset(dx, dy);
+                park.lay(tile, Terrain::Grass).expect("grass should lay");
+                while park.land().height_at(tile).unwrap_or(0) > 0 {
+                    park.lower(tile).expect("the land should come down");
+                }
+            }
+        }
+
+        let id = park
+            .start_a_ride("The Coaster", corner, Heading::North)
+            .expect("a ride should start");
+        for side in [
+            [TrackPiece::Station, TrackPiece::LiftHill],
+            [TrackPiece::LiftHill, TrackPiece::LiftHill],
+            [TrackPiece::SlopeDown, TrackPiece::SlopeDown],
+            [TrackPiece::SlopeDown, TrackPiece::Brakes],
+        ] {
+            park.lay_track(id, TrackPiece::CurveRight)
+                .expect("a corner should lay");
+            for piece in side {
+                park.lay_track(id, piece).expect("a side should lay");
+            }
+        }
+
+        park.test_ride(id).expect("the coaster should run");
+        park.open_ride(id).expect("and open");
+        (park, id)
+    }
+
+    #[test]
+    fn a_ride_costs_what_its_track_costs() {
+        let (park, id) = park_with_a_coaster();
+        let ride = park.ride(id).expect("the ride is there");
+
+        assert_eq!(ride.track().len(), 12, "four corners and eight sides");
+        assert!(ride.track().cost() > 0);
+        assert!(
+            park.wage_bill() >= ride.upkeep(),
+            "a ride costs nothing to run"
+        );
+        assert!(park.cash() < 50_000 + Park::STARTING_CASH, "it was free");
+    }
+
+    #[test]
+    fn a_station_has_to_be_somewhere_guests_can_reach() {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let start = TilePos::new(18, 16);
+        park.lay(start, Terrain::Grass).unwrap();
+        let id = park.start_a_ride("Up There", start, Heading::East).unwrap();
+
+        park.lay_track(id, TrackPiece::LiftHill).unwrap();
+        assert!(
+            park.lay_track(id, TrackPiece::Station).is_err(),
+            "a station was built up in the air"
+        );
+    }
+
+    #[test]
+    fn track_cannot_be_laid_on_anything_that_is_already_there() {
+        let (mut park, _) = park_with_a_coaster();
+        let taken = park.rides()[0].track().tiles()[0];
+
+        assert!(park.build(taken, Facility::Bench).is_err(), "on the track");
+        assert!(park.raise(taken).is_err(), "the land under the track moved");
+
+        let another = park
+            .start_a_ride("The Other One", taken, Heading::North)
+            .err();
+        assert!(another.is_some(), "two rides on one tile");
+    }
+
+    #[test]
+    fn a_ride_cannot_be_laid_underground() {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let start = TilePos::new(18, 16);
+        park.lay(start, Terrain::Grass).unwrap();
+        while park.land().height_at(start).unwrap_or(0) > 0 {
+            park.lower(start).unwrap();
+        }
+
+        let id = park
+            .start_a_ride("Down There", start, Heading::East)
+            .unwrap();
+        park.lay_track(id, TrackPiece::Station).unwrap();
+        assert!(
+            park.lay_track(id, TrackPiece::SlopeDown).is_err(),
+            "the track dug itself into the ground"
+        );
+    }
+
+    #[test]
+    fn guests_queue_for_a_ride_pay_for_it_and_come_back_off() {
+        let (park, id) = park_with_a_coaster();
+        let park = run(park, A_WHOLE_VISIT);
+
+        let ride = park.ride(id).expect("the ride is there");
+        assert!(ride.riders() > 0, "nobody went on it all day");
+        assert!(ride.takings() > 0, "and nobody paid");
+        assert!(
+            park.guests()
+                .iter()
+                .any(|guest| guest.needs().boredom() < 0.3),
+            "nobody in the park had anything to do"
+        );
+    }
+
+    #[test]
+    fn a_park_with_a_ride_keeps_its_guests_longer_than_one_without() {
+        let (with_a_ride, _) = park_with_a_coaster();
+        let with_a_ride = run(with_a_ride, A_WHOLE_VISIT);
+        let without = bare_park_opened_for(A_WHOLE_VISIT);
+
+        assert!(
+            with_a_ride.guests_who_left() < without.guests_who_left(),
+            "{} left the park with a coaster in it against {} from the empty one",
+            with_a_ride.guests_who_left(),
+            without.guests_who_left()
+        );
+    }
+
+    #[test]
+    fn nobody_queues_for_a_ride_priced_past_what_it_is_worth() {
+        let (mut park, id) = park_with_a_coaster();
+        park.set_ride_price(id, Ride::MAX_PRICE).unwrap();
+
+        let park = run(park, A_WHOLE_VISIT);
+        assert_eq!(
+            park.ride(id).map(Ride::riders),
+            Some(0),
+            "somebody paid the full hundred"
+        );
+    }
+
+    #[test]
+    fn a_worn_out_ride_breaks_down_and_a_mechanic_puts_it_back() {
+        let (mut park, id) = park_with_a_coaster();
+
+        // Worn right out, so the breakdown comes within a visit rather than
+        // within an afternoon.
+        for _ in 0..200_000 {
+            park.tick_once();
+            if park.ride(id).map(Ride::state) == Some(RideState::Broken) {
+                break;
+            }
+        }
+        assert_eq!(
+            park.ride(id).map(Ride::state),
+            Some(RideState::Broken),
+            "nothing ever went wrong with it"
+        );
+
+        // Nobody to fix it: it stays broken.
+        let park = run(park, 20_000);
+        assert_eq!(park.ride(id).map(Ride::state), Some(RideState::Broken));
+
+        let mut park = park;
+        park.adjust_cash(10_000);
+        park.hire(StaffKind::Mechanic).unwrap();
+        let park = run(park, 20_000);
+
+        assert_ne!(
+            park.ride(id).map(Ride::state),
+            Some(RideState::Broken),
+            "the mechanic never got to it"
+        );
+    }
+
+    #[test]
+    fn demolishing_a_ride_puts_whoever_is_aboard_back_on_their_feet() {
+        let (mut park, id) = park_with_a_coaster();
+        for _ in 0..A_WHOLE_VISIT {
+            park.tick_once();
+            if park.guests().iter().any(|guest| guest.riding() == Some(id)) {
+                break;
+            }
+        }
+        assert!(
+            park.guests().iter().any(|guest| guest.riding() == Some(id)),
+            "nobody ever got on"
+        );
+
+        park.demolish_ride(id).expect("the ride was there");
+        assert!(
+            park.guests().iter().all(|guest| guest.riding().is_none()),
+            "somebody is still aboard a ride that no longer exists"
+        );
+        assert!(park.rides().is_empty());
+    }
+
+    #[test]
+    fn a_bankrupt_park_cannot_build_a_ride() {
+        let mut park = bankrupt_park();
+        park.adjust_cash(100_000);
+
+        assert!(park
+            .start_a_ride("No Chance", TilePos::new(5, 5), Heading::North)
+            .is_err());
+    }
+
+    #[test]
+    fn a_park_survives_a_save_with_a_ride_mid_lap() {
+        let (park, id) = park_with_a_coaster();
+        let park = run(park, 5_000);
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded, park);
+        assert_eq!(
+            loaded.ride(id).map(Ride::stats),
+            park.ride(id).map(Ride::stats)
+        );
+        assert_eq!(
+            loaded.ride(id).map(|ride| ride.trains().to_vec()),
+            park.ride(id).map(|ride| ride.trains().to_vec())
+        );
     }
 }
