@@ -25,7 +25,7 @@ pub fn draw_facilities(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) 
             continue;
         };
 
-        let base = camera.world_to_screen(tile.centre());
+        let base = camera.world_to_screen(park.land().point(tile));
         if !is_on_screen(base, camera, scale) {
             continue;
         }
@@ -87,8 +87,22 @@ pub fn describe(park: &Park, tile: TilePos) -> String {
         );
     }
 
+    let steps = park.land().height_at(tile).unwrap_or_default();
+    let height = if steps == 0 {
+        String::new()
+    } else {
+        format!(" — {steps} steps up")
+    };
+
     park.shop_at(tile).map_or_else(
-        || format!("{:?} at {}, {}", park.terrain()[tile], tile.x, tile.y),
+        || {
+            format!(
+                "{} at {}, {}{height}",
+                park.terrain()[tile].name(),
+                tile.x,
+                tile.y
+            )
+        },
         |shop| {
             format!(
                 "{} at {}, {} — {} each, {} taken from {}",

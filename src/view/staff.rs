@@ -9,6 +9,7 @@ use isogrid::iso::ScreenPoint;
 use isogrid::render::Renderer;
 
 use crate::park::{Park, Staff};
+use crate::view::land;
 
 /// How tall a member of staff stands, as a fraction of a tile's width.
 const HEIGHT: f32 = 0.44;
@@ -32,7 +33,13 @@ pub fn draw_staff(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
     });
 
     for member in order {
-        let base = camera.world_to_screen(member.position());
+        let standing = land::between(
+            park.land(),
+            member.tile(),
+            member.next_tile(),
+            member.progress(),
+        );
+        let base = camera.world_to_screen(standing);
         if !is_on_screen(base, camera, scale) {
             continue;
         }

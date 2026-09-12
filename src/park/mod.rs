@@ -1937,4 +1937,120 @@ mod tests {
         assert_eq!(loaded.shop_at(priced).map(Shop::price), Some(17));
         assert_eq!(loaded.staff().len(), 2);
     }
+    #[test]
+    fn moving_the_land_costs_money() {
+        let mut park = Park::new("Landscaping", 32, 32, 1).unwrap();
+        let tile = TilePos::new(5, 5);
+        let before = park.cash();
+
+        assert_eq!(park.raise(tile).unwrap(), 1);
+        assert_eq!(park.cash(), before - Park::LANDSCAPING);
+        assert_eq!(park.land().height_at(tile), Some(1));
+
+        assert_eq!(park.lower(tile).unwrap(), 0);
+        assert_eq!(park.cash(), before - Park::LANDSCAPING * 2);
+    }
+
+    #[test]
+    fn a_park_that_cannot_pay_cannot_dig() {
+        let mut park = Park::new("Skint", 32, 32, 1).unwrap();
+        park.adjust_cash(-park.cash());
+
+        assert!(park.raise(TilePos::new(5, 5)).is_err());
+        assert!(park.lay(TilePos::new(5, 5), Terrain::Path).is_err());
+        assert!(!park.can_reshape(TilePos::new(5, 5)));
+    }
+
+    #[test]
+    fn the_land_cannot_be_moved_under_somebody_standing_on_it() {
+        let mut park = opened_for(Park::TICKS_BETWEEN_ARRIVALS);
+        let standing_on = park.guests()[0].tile();
+
+        assert!(
+            park.raise(standing_on).is_err(),
+            "a guest was marooned on a pillar"
+        );
+        assert!(park.lower(standing_on).is_err());
+        assert!(park.lay(standing_on, Terrain::Water).is_err());
+        assert!(!park.can_reshape(standing_on));
+    }
+
+    #[test]
+    fn the_land_cannot_be_moved_under_a_building() {
+        let mut park = Park::new("Landscaping", 32, 32, 1).unwrap();
+        let tile = TilePos::new(5, 5);
+        park.build(tile, Facility::Bench).unwrap();
+
+        assert!(park.raise(tile).is_err(), "a bench was put on stilts");
+        assert!(!park.can_lay(tile, Terrain::Path));
+    }
+
+    #[test]
+    fn a_bankrupt_park_cannot_afford_a_shovel() {
+        let mut park = bankrupt_park();
+        park.adjust_cash(100_000);
+
+        assert!(park.raise(TilePos::new(5, 5)).is_err());
+        assert!(park.lay(TilePos::new(5, 5), Terrain::Path).is_err());
+    }
+
+    #[test]
+    fn laying_a_surface_costs_what_it_says_and_rock_is_not_for_sale() {
+        let mut park = Park::new("Paving", 32, 32, 1).unwrap();
+        let tile = TilePos::new(6, 6);
+        let before = park.cash();
+
+        park.lay(tile, Terrain::Path).unwrap();
+        assert_eq!(park.terrain()[tile], Terrain::Path);
+        assert_eq!(park.cash(), before - Terrain::Path.lay_cost().unwrap());
+
+        assert!(park.lay(tile, Terrain::Rock).is_err());
+        assert!(!park.can_lay(tile, Terrain::Rock));
+        assert!(park.lay(TilePos::new(-1, -1), Terrain::Path).is_err());
+    }
+
+    #[test]
+    fn the_crowd_walks_round_a_cliff_rather_than_over_it() {
+        let mut park = Park::new("Blocked", 32, 32, 5).unwrap();
+
+        // A pillar in the middle of the crossroads, too steep to climb.
+        let blocked = TilePos::new(16, 16);
+        assert_eq!(park.terrain()[blocked], Terrain::Path);
+        park.adjust_cash(10_000);
+        for _ in 0..=Land::MAX_STEP {
+            park.raise(blocked).unwrap();
+        }
+
+        let park = run(park, 3_000);
+        assert!(
+            park.guests().iter().all(|guest| guest.tile() != blocked),
+            "somebody climbed a cliff"
+        );
+        assert!(!park.guests().is_empty(), "the park emptied out instead");
+    }
+
+    #[test]
+    fn a_gentle_ramp_is_still_walked_on() {
+        let mut park = Park::new("Ramped", 32, 32, 5).unwrap();
+        let ramp = TilePos::new(16, 16);
+        park.raise(ramp).unwrap();
+
+        let park = run(park, 3_000);
+        assert!(
+            park.guests().iter().any(|guest| guest.tile() == ramp),
+            "a single step put the whole crowd off"
+        );
+    }
+
+    #[test]
+    fn the_land_survives_a_save_with_its_hills() {
+        let mut park = Park::new("Hilly", 32, 32, 1).unwrap();
+        park.raise(TilePos::new(7, 7)).unwrap();
+        park.raise(TilePos::new(7, 7)).unwrap();
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, park);
+        assert_eq!(loaded.land().height_at(TilePos::new(7, 7)), Some(2));
+    }
 }

@@ -7,7 +7,7 @@ use isogrid::iso::{ScreenPoint, TilePos, TileSize};
 use isogrid::render::Renderer;
 use isogrid::time::Tick;
 
-use crate::park::Park;
+use crate::park::{Land, Park};
 use crate::tool::Tool;
 use crate::view::{self, Overlay};
 
@@ -186,14 +186,31 @@ impl OpenPark {
             self.camera.zoom_by(1.0 / ZOOM_STEP);
         }
 
-        let tile = self.camera.pick_tile(input.pointer(), 0.0);
-        self.hovered = self
-            .pinned
-            .or_else(|| self.park.terrain().contains(tile).then_some(tile));
+        self.hovered = self.pinned.or_else(|| self.tile_under(input.pointer()));
 
         if input.button_pressed(Button::Left) {
             self.use_the_tool();
         }
+    }
+
+    /// The tile the pointer is actually over, hills and all.
+    ///
+    /// The camera can only unproject onto one flat plane at a time, so this
+    /// asks it about every height in the park from the top down and takes the
+    /// first answer that agrees with the land. A tile standing eight steps up
+    /// covers the tiles behind it on screen, and that is the one the pointer is
+    /// on — which is why the search runs downwards.
+    fn tile_under(&self, pointer: ScreenPoint) -> Option<TilePos> {
+        let land = self.park.land();
+
+        for step in (Land::MIN_HEIGHT..=land.highest()).rev() {
+            let tile = self.camera.pick_tile(pointer, f32::from(step));
+            if land.height_at(tile) == Some(step) {
+                return Some(tile);
+            }
+        }
+
+        None
     }
 
     /// Applies the held tool to the tile under the pointer.
@@ -231,6 +248,18 @@ impl OpenPark {
                 || "There is nobody there to let go".to_owned(),
                 |staff| format!("Let the {} go", staff.kind().name().to_lowercase()),
             )),
+            Tool::Raise => Some(match self.park.raise(tile) {
+                Ok(height) => format!("Raised to {height} steps"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Lower => Some(match self.park.lower(tile) {
+                Ok(height) => format!("Dug down to {height} steps"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Lay(terrain) => Some(match self.park.lay(tile, terrain) {
+                Ok(()) => format!("Laid {}", terrain.name().to_lowercase()),
+                Err(refused) => refused.to_string(),
+            }),
         };
     }
 }
@@ -570,5 +599,34 @@ mod tests {
         let before = game.park().tick();
         game.tick(Tick::ZERO, &Input::default());
         assert_eq!(game.park().tick().get(), before.get() + 1);
+    }
+    #[test]
+    fn the_pointer_picks_the_top_of_a_hill_rather_than_the_ground() {
+        let mut park = Park::new("Hilly", 32, 32, 1).expect("a valid park");
+        let hill = TilePos::new(16, 16);
+        for _ in 0..4 {
+            park.raise(hill).expect("the land should take it");
+        }
+
+        let game = OpenPark::new(park, 1280.0, 720.0).expect("a valid window");
+        let land = game.park().land();
+        let on_screen = game.camera().world_to_screen(land.point(hill));
+
+        assert_eq!(
+            game.tile_under(on_screen),
+            Some(hill),
+            "the pointer went through the hill to the ground behind it"
+        );
+    }
+
+    #[test]
+    fn the_pointer_picks_nothing_outside_the_park() {
+        let park = Park::new("Small", 8, 8, 1).expect("a valid park");
+        let game = OpenPark::new(park, 1280.0, 720.0).expect("a valid window");
+
+        let far_away = game
+            .camera()
+            .world_to_screen(TilePos::new(-40, -40).centre());
+        assert_eq!(game.tile_under(far_away), None);
     }
 }

@@ -111,6 +111,16 @@ impl Staff {
         self.walk.position()
     }
 
+    /// The tile they are walking towards, if they are walking anywhere.
+    pub fn next_tile(&self) -> Option<TilePos> {
+        self.walk.next_tile()
+    }
+
+    /// How far between their two tiles they are, from 0 to 1.
+    pub const fn progress(&self) -> f32 {
+        self.walk.progress()
+    }
+
     /// Whether they have run out of route and want somewhere new to be.
     pub fn is_idle(&self) -> bool {
         self.walk.is_idle()
