@@ -57,14 +57,19 @@ impl Heading {
         self.right().right()
     }
 
-    /// The tile one step this way.
-    pub fn beyond(self, tile: TilePos) -> TilePos {
-        let (dx, dy) = match self {
+    /// Which way this heading points, as one tile of movement.
+    pub const fn delta(self) -> (i32, i32) {
+        match self {
             Self::North => (0, -1),
             Self::East => (1, 0),
             Self::South => (0, 1),
             Self::West => (-1, 0),
-        };
+        }
+    }
+
+    /// The tile one step this way.
+    pub fn beyond(self, tile: TilePos) -> TilePos {
+        let (dx, dy) = self.delta();
         tile.offset(dx, dy)
     }
 }
@@ -483,6 +488,16 @@ mod tests {
             assert_eq!(heading.left(), heading.right().right().right());
             assert_eq!(heading.about(), heading.right().right());
             assert_ne!(heading.about(), heading);
+        }
+    }
+
+    #[test]
+    fn a_heading_points_somewhere_and_its_opposite_points_back() {
+        for heading in Heading::ALL {
+            let (dx, dy) = heading.delta();
+            let (bx, by) = heading.about().delta();
+            assert_eq!((dx + bx, dy + by), (0, 0), "{heading:?}");
+            assert_eq!(dx.abs() + dy.abs(), 1, "{heading:?} is not one tile");
         }
     }
 

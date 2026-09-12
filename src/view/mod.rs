@@ -6,6 +6,7 @@
 mod facility;
 mod guest;
 mod land;
+mod ride;
 mod staff;
 
 use isogrid::camera::Camera;
@@ -58,6 +59,7 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     canvas.clear(SKY);
     land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
+    ride::draw_rides(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
     staff::draw_staff(canvas, park, camera);
 
@@ -138,6 +140,11 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         format!("Takings: {}", park.takings()),
         format!("Guests: {}", park.guests().len()),
         format!("Staff: {}", park.staff().len()),
+        format!(
+            "Rides: {} ({} open)",
+            park.rides().len(),
+            park.rides().iter().filter(|ride| ride.is_open()).count()
+        ),
         park.average_happiness().map_or_else(
             || "Happiness: —".to_owned(),
             |happiness| format!("Happiness: {:.0}%", happiness * 100.0),
