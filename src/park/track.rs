@@ -93,11 +93,19 @@ pub enum TrackPiece {
     /// Flat, and slows a train to a crawl. What stops a circuit arriving back at
     /// the station too fast to stop.
     Brakes,
+    /// Flat and driven: the train is pushed along at a steady pace whatever it
+    /// arrived at.
+    ///
+    /// What a gentle ride is made of. A coaster earns its speed from its own
+    /// height and loses it to friction, so a flat circuit built only of plain
+    /// track stalls on its first lap however it is dispatched — powered track is
+    /// the honest way to have a ride that does not need a hill.
+    Powered,
 }
 
 impl TrackPiece {
     /// Every piece that can be built, in the order a toolbar would list them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Station,
         Self::Straight,
         Self::CurveLeft,
@@ -106,6 +114,7 @@ impl TrackPiece {
         Self::SlopeDown,
         Self::LiftHill,
         Self::Brakes,
+        Self::Powered,
     ];
 
     /// How many steps this piece climbs: negative for a drop.
@@ -113,7 +122,12 @@ impl TrackPiece {
         match self {
             Self::SlopeUp | Self::LiftHill => 1,
             Self::SlopeDown => -1,
-            Self::Station | Self::Straight | Self::CurveLeft | Self::CurveRight | Self::Brakes => 0,
+            Self::Station
+            | Self::Straight
+            | Self::CurveLeft
+            | Self::CurveRight
+            | Self::Brakes
+            | Self::Powered => 0,
         }
     }
 
@@ -128,7 +142,8 @@ impl TrackPiece {
             | Self::SlopeUp
             | Self::SlopeDown
             | Self::LiftHill
-            | Self::Brakes => heading,
+            | Self::Brakes
+            | Self::Powered => heading,
         }
     }
 
@@ -141,6 +156,7 @@ impl TrackPiece {
             Self::SlopeUp | Self::SlopeDown => 90,
             Self::LiftHill => 140,
             Self::Brakes => 110,
+            Self::Powered => 120,
         }
     }
 
@@ -148,6 +164,7 @@ impl TrackPiece {
     pub const fn upkeep(self) -> Money {
         match self {
             Self::Station | Self::LiftHill | Self::Brakes => 3,
+            Self::Powered => 4,
             _ => 1,
         }
     }
@@ -155,7 +172,7 @@ impl TrackPiece {
     /// Whether a train under power on this piece is being pulled rather than
     /// coasting.
     pub const fn is_powered(self) -> bool {
-        matches!(self, Self::LiftHill | Self::Station)
+        matches!(self, Self::LiftHill | Self::Station | Self::Powered)
     }
 
     /// What to call it in the HUD.
@@ -169,6 +186,7 @@ impl TrackPiece {
             Self::SlopeDown => "Slope down",
             Self::LiftHill => "Lift hill",
             Self::Brakes => "Brakes",
+            Self::Powered => "Powered track",
         }
     }
 }
