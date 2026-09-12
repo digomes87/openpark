@@ -21,6 +21,9 @@ const TRAIN: f32 = 0.3;
 /// How tall the station platform stands.
 const PLATFORM: f32 = 0.06;
 
+/// How thick the supports under raised track are.
+const SUPPORT: f32 = 0.06;
+
 /// The rails, by what the ride is doing.
 const RUNNING: Color = Color::hex(0xD8_D2_C4);
 const SHUT: Color = Color::hex(0x9A_92_84);
@@ -30,6 +33,9 @@ const FAULT: Color = Color::hex(0xE8_6A_5A);
 /// The colour of a train, and of the platform beside a station.
 const CARRIAGE: Color = Color::hex(0xC4_3B_3B);
 const PLATFORM_COLOUR: Color = Color::hex(0xB2_A8_90);
+
+/// The timber under raised track.
+const SUPPORT_COLOUR: Color = Color::hex(0x6B_53_3A);
 
 /// Draws every ride in the park, back to front.
 pub fn draw_rides(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
@@ -50,7 +56,8 @@ pub fn draw_rides(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
     order.sort_by_key(|(laid, _)| (laid.tile.x + laid.tile.y, laid.tile.x, laid.entry));
 
     for (laid, ride) in order {
-        draw_piece(canvas, camera, scale, laid, ride);
+        let ground = park.land().elevation(laid.tile);
+        draw_piece(canvas, camera, scale, laid, ride, ground);
     }
 
     for ride in park.rides() {
@@ -58,8 +65,19 @@ pub fn draw_rides(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
     }
 }
 
-/// One piece of track, and the platform if it is a station.
-fn draw_piece(canvas: &mut dyn Renderer, camera: &Camera, scale: f32, laid: Segment, ride: &Ride) {
+/// One piece of track: its supports, its platform if it is a station, and its
+/// rails.
+///
+/// `ground` is how high the land under it stands, which is what decides whether
+/// the piece needs holding up at all.
+fn draw_piece(
+    canvas: &mut dyn Renderer,
+    camera: &Camera,
+    scale: f32,
+    laid: Segment,
+    ride: &Ride,
+    ground: f32,
+) {
     let colour = match ride.state() {
         RideState::Open => RUNNING,
         RideState::Closed => SHUT,
@@ -67,8 +85,19 @@ fn draw_piece(canvas: &mut dyn Renderer, camera: &Camera, scale: f32, laid: Segm
         RideState::Broken => FAULT,
     };
 
+    // Supports first, so the rails are drawn over the top of them. Without
+    // these a rail three steps up reads as a rail lying on the grass: there is
+    // nothing in an isometric view to say how high a floating line is except
+    // what holds it up.
+    let middle = along(laid, 0.5);
+    if middle.z > ground {
+        let top = camera.world_to_screen(middle);
+        let foot = camera.world_to_screen(GridPoint::new(middle.x, middle.y, ground));
+        canvas.line(foot, top, SUPPORT * scale, SUPPORT_COLOUR);
+    }
+
     if laid.piece == TrackPiece::Station {
-        let platform = camera.world_to_screen(along(laid, 0.5));
+        let platform = camera.world_to_screen(middle);
         canvas.line(
             ScreenPoint::new(platform.x - scale * 0.3, platform.y),
             ScreenPoint::new(platform.x + scale * 0.3, platform.y),
@@ -77,7 +106,7 @@ fn draw_piece(canvas: &mut dyn Renderer, camera: &Camera, scale: f32, laid: Segm
         );
     }
 
-    let (from, middle, to) = (along(laid, 0.0), along(laid, 0.5), along(laid, 1.0));
+    let (from, to) = (along(laid, 0.0), along(laid, 1.0));
     for (a, b) in [(from, middle), (middle, to)] {
         canvas.line(
             camera.world_to_screen(a),
@@ -220,8 +249,20 @@ mod tests {
         let mut canvas = Recorder::new();
         draw_rides(&mut canvas, &park, &camera);
 
-        // Two rails a piece, one platform for the station, one train.
-        let expected = ride.track().len() * 2 + ride.track().stations().len() + ride.trains().len();
+        // Two rails a piece, plus a support under every raised piece, the
+        // station's platform, and the train.
+        let raised = ride
+            .track()
+            .segments()
+            .iter()
+            .filter(|laid| {
+                let ground = park.land().height_at(laid.tile).unwrap_or_default();
+                laid.entry.max(laid.exit) > ground || laid.entry.min(laid.exit) > ground
+            })
+            .count();
+
+        let expected =
+            ride.track().len() * 2 + raised + ride.track().stations().len() + ride.trains().len();
         assert_eq!(lines(&canvas), expected);
     }
 
@@ -270,6 +311,72 @@ mod tests {
         assert_eq!(along(slope, 0.0).z, 2.0);
         assert_eq!(along(slope, 0.5).z, 2.5, "halfway up");
         assert_eq!(along(slope, 1.0).z, 3.0);
+    }
+
+    #[test]
+    fn track_three_steps_up_is_drawn_three_steps_up_the_screen() {
+        let camera = Camera::new(TileSize::CLASSIC, Viewport::new(800.0, 600.0).unwrap());
+        let flat = Segment {
+            piece: TrackPiece::Straight,
+            tile: TilePos::new(4, 4),
+            heading: Heading::East,
+            entry: 0,
+            exit: 0,
+        };
+        let high = Segment {
+            entry: 3,
+            exit: 3,
+            ..flat
+        };
+
+        let on_the_ground = camera.world_to_screen(along(flat, 0.5));
+        let in_the_air = camera.world_to_screen(along(high, 0.5));
+
+        assert!(
+            in_the_air.y < on_the_ground.y,
+            "raised track drew at {} against {} on the ground",
+            in_the_air.y,
+            on_the_ground.y
+        );
+    }
+
+    #[test]
+    fn the_demo_coaster_is_drawn_with_its_hill_in_the_air() {
+        let mut park = Park::new("Demo", 48, 48, 1).unwrap();
+        park.adjust_cash(50_000);
+        crate::demo::coaster(&mut park).unwrap();
+
+        let mut camera = Camera::new(TileSize::CLASSIC, Viewport::new(1600.0, 1200.0).unwrap());
+        camera.look_at(TilePos::new(26, 26).centre());
+
+        let mut canvas = Recorder::new();
+        draw_rides(&mut canvas, &park, &camera);
+
+        // Every rail end, and how far apart the highest and lowest of them are.
+        let ys: Vec<f32> = canvas
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                Command::Line(from, to, ..) => Some([from.y, to.y]),
+                _ => None,
+            })
+            .flatten()
+            .collect();
+
+        let lowest = ys.iter().copied().fold(f32::MIN, f32::max);
+        let highest = ys.iter().copied().fold(f32::MAX, f32::min);
+        let three_steps = 3.0 * camera.tiles().elevation() * camera.zoom();
+
+        println!(
+            "span {} against three steps {}",
+            lowest - highest,
+            three_steps
+        );
+        assert!(
+            lowest - highest > three_steps,
+            "the rails span {} pixels, which is less than the {three_steps} a three-step hill needs",
+            lowest - highest
+        );
     }
 
     #[test]
