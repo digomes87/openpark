@@ -26,6 +26,8 @@ pub struct Options {
     pub hover: Option<TilePos>,
     /// The tool to hold while taking it.
     pub tool: Tool,
+    /// Whether to lay the demo coaster before the window opens.
+    pub coaster: bool,
 }
 
 impl Default for Options {
@@ -38,6 +40,7 @@ impl Default for Options {
             focus: None,
             hover: None,
             tool: Tool::default(),
+            coaster: false,
         }
     }
 }
@@ -52,6 +55,7 @@ openpark — a park simulator
     --zoom F            zoom to take the screenshot at
     --focus X,Y         tile to centre the view on
     --hover X,Y         tile to pretend the pointer is over
+    --coaster           lay the demo coaster before the window opens
     --tool NAME         inspect, stall, bench, demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
                         dig, path, grass, dirt or water
@@ -99,6 +103,7 @@ impl Options {
                 Flag::Focus => options.focus = Some(tile(&value()?, "--focus")?),
                 Flag::Hover => options.hover = Some(tile(&value()?, "--hover")?),
                 Flag::Tool => options.tool = tool(&value()?)?,
+                Flag::Coaster => options.coaster = true,
                 Flag::Help => anyhow::bail!("{USAGE}"),
                 Flag::Unknown => anyhow::bail!("unknown option {argument}\n\n{USAGE}"),
             }
@@ -122,6 +127,7 @@ enum Flag {
     Focus,
     Hover,
     Tool,
+    Coaster,
     Help,
     Unknown,
 }
@@ -135,6 +141,7 @@ fn value_of(argument: &str) -> Flag {
         "--focus" => Flag::Focus,
         "--hover" => Flag::Hover,
         "--tool" => Flag::Tool,
+        "--coaster" => Flag::Coaster,
         "-h" | "--help" => Flag::Help,
         _ => Flag::Unknown,
     }
