@@ -223,6 +223,16 @@ impl TestFailure {
     }
 }
 
+impl core::fmt::Display for TestFailure {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.why())
+    }
+}
+
+// So that a failed test run can be handed to `anyhow` like any other error,
+// rather than having to be described again at every call site.
+impl std::error::Error for TestFailure {}
+
 /// Whether a ride is running, and why not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
