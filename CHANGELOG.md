@@ -29,6 +29,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - HUD lines for the wage bill, total takings and the staff count; the cash line
   turns red in debt, and the park's name says `BANKRUPT`.
 
+- Terrain editing. The land has a height per tile, 0 to 16 steps: `Park::raise`,
+  `Park::lower` and `Park::lay` charge for the work and refuse it under a
+  building or somebody's feet. Raise, dig and four laying tools are on the space
+  bar and on `--tool`.
+- The shape of the land reaches the crowd: a step up costs four times a flat step
+  and anything steeper is a cliff nobody walks off, both through
+  `Land::step_cost`.
+- A new park is generated rolling rather than flat, then smoothed so no
+  generated slope is a cliff.
+- `view::land` draws the ground at the height it stands, with the exposed face
+  below it, and everybody — guests, staff, buildings — stands on top of it.
+  Hover picking follows the hills.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and
@@ -37,3 +50,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the price on that shop's board.
 - Walking is shared: `Walk` holds the route and the position for both guests and
   staff, and `Guest` delegates to it.
+- `Park` holds a `Land` rather than a bare terrain grid; `Park::terrain` still
+  returns the ground grid.
+- `--tool raise` and `--tool lower` are now `price-up` and `price-down`; `raise`
+  and `dig` move the land.

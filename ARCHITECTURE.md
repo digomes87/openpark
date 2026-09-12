@@ -24,6 +24,7 @@ src/
 ├── park/          the simulation
 │   ├── mod.rs         Park: the land, the money, the payroll, the tick
 │   ├── terrain.rs     Terrain: what the ground is and what it costs to cross
+│   ├── land.rs        Land: the two grids of ground and height, and its rules
 │   ├── facility.rs    Facility: what a kind of stall or bench is like
 │   ├── shop.rs        Shop: one built facility, its price and its till
 │   ├── guest.rs       Guest: somebody visiting, and what they are doing about it
@@ -32,6 +33,7 @@ src/
 │   └── walk.rs        Walk: a route and a position, shared by both of them
 ├── view/          drawing, entirely through isogrid::render::Renderer
 │   ├── mod.rs         the frame: sky, land, hover highlight, HUD
+│   ├── land.rs        the ground at the height it stands, faces and all
 │   ├── facility.rs    what is built, and the label for the hovered tile
 │   ├── guest.rs       the crowd
 │   └── staff.rs       the payroll
