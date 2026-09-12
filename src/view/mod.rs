@@ -87,7 +87,10 @@ fn draw_highlight(
 /// The colour the hovered tile is filled with, given what the pointer holds.
 fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
     let allowed = match tool {
-        Tool::Inspect => return HIGHLIGHT,
+        // Looking at something changes nothing, and track goes where the
+        // layout says rather than where the pointer is — neither has a yes or
+        // a no to show.
+        Tool::Inspect | Tool::Track(_) | Tool::Unlay => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
         Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
         // Hiring happens at the gate, so every tile is as good as any other;
@@ -96,6 +99,10 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         Tool::Fire => park.staff().iter().any(|member| member.tile() == tile),
         Tool::Raise | Tool::Lower => park.can_reshape(tile),
         Tool::Lay(terrain) => park.can_lay(tile, terrain),
+        Tool::StartRide => park.can_start_a_ride(tile),
+        Tool::TestRide | Tool::OpenRide | Tool::CloseRide | Tool::DemolishRide => {
+            park.ride_at(tile).is_some()
+        }
     };
 
     if allowed {

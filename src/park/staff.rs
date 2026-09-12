@@ -19,11 +19,13 @@ pub enum StaffKind {
     Handyman,
     /// Works the crowd: cheers up every guest walking near them.
     Entertainer,
+    /// Fixes rides: puts a broken one back together, if they can get to it.
+    Mechanic,
 }
 
 impl StaffKind {
     /// Everybody who can be hired, in the order a menu would list them.
-    pub const ALL: [Self; 2] = [Self::Handyman, Self::Entertainer];
+    pub const ALL: [Self; 3] = [Self::Handyman, Self::Entertainer, Self::Mechanic];
 
     /// What it costs to take somebody on.
     ///
@@ -32,6 +34,7 @@ impl StaffKind {
         match self {
             Self::Handyman => 150,
             Self::Entertainer => 250,
+            Self::Mechanic => 300,
         }
     }
 
@@ -40,6 +43,7 @@ impl StaffKind {
         match self {
             Self::Handyman => 40,
             Self::Entertainer => 60,
+            Self::Mechanic => 80,
         }
     }
 
@@ -48,6 +52,9 @@ impl StaffKind {
         match self {
             Self::Handyman => 3,
             Self::Entertainer => 4,
+            // Further than the rest: a mechanic walking the park should reach
+            // the ride that broke down without being stood next to it.
+            Self::Mechanic => 6,
         }
     }
 
@@ -56,6 +63,7 @@ impl StaffKind {
         match self {
             Self::Handyman => "Handyman",
             Self::Entertainer => "Entertainer",
+            Self::Mechanic => "Mechanic",
         }
     }
 
@@ -64,6 +72,7 @@ impl StaffKind {
         match self {
             Self::Handyman => Color::hex(0x2F_6F_4F),
             Self::Entertainer => Color::hex(0xC0_3B_8F),
+            Self::Mechanic => Color::hex(0x3B_5B_C0),
         }
     }
 }
