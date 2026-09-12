@@ -23,6 +23,40 @@ pub enum Terrain {
 }
 
 impl Terrain {
+    /// Everything a player can lay down, in the order a toolbar would list it.
+    ///
+    /// Rock is not on it: a park can quarry its way around one, never make one.
+    pub const LAYABLE: [Self; 4] = [Self::Path, Self::Grass, Self::Dirt, Self::Water];
+
+    /// What it costs the park to lay one tile of this, or `None` for something
+    /// no amount of money will buy.
+    ///
+    /// ```
+    /// # use openpark::park::Terrain;
+    /// assert!(Terrain::Path.lay_cost() > Terrain::Grass.lay_cost());
+    /// assert_eq!(Terrain::Rock.lay_cost(), None, "rock is not for sale");
+    /// ```
+    pub const fn lay_cost(self) -> Option<crate::park::Money> {
+        match self {
+            Self::Path => Some(25),
+            Self::Grass => Some(10),
+            Self::Dirt => Some(5),
+            Self::Water => Some(50),
+            Self::Rock => None,
+        }
+    }
+
+    /// What to call it in the HUD.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Grass => "Grass",
+            Self::Path => "Path",
+            Self::Dirt => "Dirt",
+            Self::Water => "Water",
+            Self::Rock => "Rock",
+        }
+    }
+
     /// Whether a guest can stand here.
     ///
     /// ```
@@ -150,5 +184,39 @@ mod tests {
             assert_eq!(serde_json::from_str::<Terrain>(&json).unwrap(), terrain);
         }
         assert_eq!(serde_json::to_string(&Terrain::Grass).unwrap(), "\"grass\"");
+    }
+    #[test]
+    fn everything_layable_has_a_price_and_rock_does_not() {
+        for terrain in Terrain::LAYABLE {
+            assert!(
+                terrain.lay_cost().is_some_and(|cost| cost > 0),
+                "{terrain:?} is free to lay"
+            );
+        }
+        assert_eq!(Terrain::Rock.lay_cost(), None);
+        assert!(
+            !Terrain::LAYABLE.contains(&Terrain::Rock),
+            "rock is on the toolbar and cannot be bought"
+        );
+    }
+
+    #[test]
+    fn a_path_costs_more_than_the_grass_it_replaces() {
+        assert!(Terrain::Path.lay_cost() > Terrain::Grass.lay_cost());
+    }
+
+    #[test]
+    fn everything_is_told_apart_by_name() {
+        let all = [
+            Terrain::Grass,
+            Terrain::Path,
+            Terrain::Dirt,
+            Terrain::Water,
+            Terrain::Rock,
+        ];
+        let mut names: Vec<_> = all.iter().map(|terrain| terrain.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), all.len());
     }
 }

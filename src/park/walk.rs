@@ -54,6 +54,12 @@ impl Walk {
         self.route.get(self.step + 1).copied()
     }
 
+    /// How far between [`Walk::tile`] and [`Walk::next_tile`] the walker is,
+    /// from 0 to 1. Zero when there is nowhere to go.
+    pub const fn progress(&self) -> f32 {
+        self.progress
+    }
+
     /// Whether the route has run out and a new one is wanted.
     pub fn is_idle(&self) -> bool {
         self.next_tile().is_none()

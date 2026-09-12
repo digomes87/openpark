@@ -1,6 +1,6 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, Shop, StaffKind};
+use crate::park::{Facility, Park, Shop, StaffKind, Terrain};
 
 /// The thing the pointer is currently holding.
 ///
@@ -24,11 +24,17 @@ pub enum Tool {
     Hire(StaffKind),
     /// Clicking lets go of whoever is standing under the pointer.
     Fire,
+    /// Clicking raises the land under the pointer by a step.
+    Raise,
+    /// Clicking digs it down by a step.
+    Lower,
+    /// Clicking lays a new surface on the tile under the pointer.
+    Lay(Terrain),
 }
 
 impl Tool {
     /// Every tool, in the order the space bar walks through them.
-    pub const ORDER: [Self; 9] = [
+    pub const ORDER: [Self; 15] = [
         Self::Inspect,
         Self::Build(Facility::FoodStall),
         Self::Build(Facility::Bench),
@@ -38,6 +44,12 @@ impl Tool {
         Self::Hire(StaffKind::Handyman),
         Self::Hire(StaffKind::Entertainer),
         Self::Fire,
+        Self::Raise,
+        Self::Lower,
+        Self::Lay(Terrain::Path),
+        Self::Lay(Terrain::Grass),
+        Self::Lay(Terrain::Dirt),
+        Self::Lay(Terrain::Water),
     ];
 
     /// The next tool along, wrapping back to [`Tool::Inspect`].
@@ -60,6 +72,14 @@ impl Tool {
     pub const fn facility(self) -> Option<Facility> {
         match self {
             Self::Build(facility) => Some(facility),
+            _ => None,
+        }
+    }
+
+    /// What surface it is laying, if it is laying one.
+    pub const fn terrain(self) -> Option<Terrain> {
+        match self {
+            Self::Lay(terrain) => Some(terrain),
             _ => None,
         }
     }
@@ -89,6 +109,12 @@ impl Tool {
             Self::LowerPrice => format!("Bring the price down (-{})", Shop::PRICE_STEP),
             Self::Hire(kind) => format!("Hire {} ({})", kind.name(), kind.hire_cost()),
             Self::Fire => "Let somebody go".to_owned(),
+            Self::Raise => format!("Raise the land ({})", Park::LANDSCAPING),
+            Self::Lower => format!("Dig the land down ({})", Park::LANDSCAPING),
+            Self::Lay(terrain) => terrain.lay_cost().map_or_else(
+                || format!("Lay {}", terrain.name().to_lowercase()),
+                |cost| format!("Lay {} ({cost})", terrain.name().to_lowercase()),
+            ),
         }
     }
 }
@@ -147,6 +173,23 @@ mod tests {
     }
 
     #[test]
+    fn only_a_laying_tool_is_laying_something() {
+        assert_eq!(Tool::Inspect.terrain(), None);
+        assert_eq!(Tool::Raise.terrain(), None);
+        assert_eq!(Tool::Lay(Terrain::Path).terrain(), Some(Terrain::Path));
+    }
+
+    #[test]
+    fn everything_that_can_be_laid_is_in_the_cycle() {
+        for terrain in Terrain::LAYABLE {
+            assert!(
+                Tool::ORDER.contains(&Tool::Lay(terrain)),
+                "{terrain:?} cannot be laid with the mouse"
+            );
+        }
+    }
+
+    #[test]
     fn everything_that_can_be_built_or_hired_is_in_the_cycle() {
         for facility in Facility::ALL {
             assert!(
@@ -176,6 +219,12 @@ mod tests {
             if let Some(kind) = tool.staff() {
                 assert!(label.contains(kind.name()));
                 assert!(label.contains(&kind.hire_cost().to_string()));
+            }
+
+            if let Some(terrain) = tool.terrain() {
+                assert!(label
+                    .to_lowercase()
+                    .contains(&terrain.name().to_lowercase()));
             }
         }
     }

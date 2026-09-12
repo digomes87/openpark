@@ -2,6 +2,7 @@
 
 mod facility;
 mod guest;
+mod land;
 mod needs;
 mod shop;
 mod staff;
@@ -10,6 +11,7 @@ mod walk;
 
 pub use facility::Facility;
 pub use guest::{Guest, Plan};
+pub use land::Land;
 pub use needs::Needs;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
@@ -39,7 +41,7 @@ pub type Money = i64;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Park {
     name: String,
-    terrain: Grid<Terrain>,
+    land: Land,
     facilities: Grid<Option<Shop>>,
     guests: Vec<Guest>,
     staff: Vec<Staff>,
@@ -78,6 +80,9 @@ impl Park {
 
     /// How far into debt a park is allowed to go before the bank closes it.
     pub const DEBT_LIMIT: Money = -5_000;
+
+    /// What it costs to move one tile of land by one step.
+    pub const LANDSCAPING: Money = 20;
 
     /// How many ticks pass between arrivals.
     ///
@@ -184,7 +189,7 @@ impl Park {
 
         let mut park = Self {
             name: name.into(),
-            terrain,
+            land: Land::rolling(terrain, &mut rng)?,
             facilities,
             guests: Vec::new(),
             staff: Vec::new(),
@@ -233,9 +238,14 @@ impl Park {
         &self.name
     }
 
-    /// The land.
+    /// The land: what the ground is made of and how high it stands.
+    pub const fn land(&self) -> &Land {
+        &self.land
+    }
+
+    /// What the ground is made of, tile by tile.
     pub const fn terrain(&self) -> &Grid<Terrain> {
-        &self.terrain
+        self.land.terrain()
     }
 
     /// What has been built on it.
@@ -363,9 +373,9 @@ impl Park {
 
     /// Why a tile will not take a facility, money aside.
     fn check_ground(&self, tile: TilePos, facility: Facility) -> Result<()> {
-        let ground = *self
-            .terrain
-            .get(tile)
+        let ground = self
+            .land
+            .ground(tile)
             .with_context(|| format!("{tile:?} is outside the park"))?;
 
         anyhow::ensure!(
@@ -461,12 +471,12 @@ impl Park {
 
     /// The width of the park in tiles.
     pub const fn width(&self) -> u32 {
-        self.terrain.width()
+        self.land.width()
     }
 
-    /// The height of the park in tiles.
+    /// The depth of the park in tiles.
     pub const fn height(&self) -> u32 {
-        self.terrain.height()
+        self.land.height()
     }
 
     /// Adds to or subtracts from the bank balance.
@@ -591,11 +601,136 @@ impl Park {
         self.bankrupt_since
     }
 
-    /// Replaces the terrain of one tile, returning what was there.
+    /// Replaces the terrain of one tile, free of charge, returning what was
+    /// there.
     ///
-    /// Returns `None` and changes nothing if the tile is outside the park.
+    /// Returns `None` and changes nothing if the tile is outside the park. This
+    /// is the map generator's door in; [`Park::lay`] is the player's, and it
+    /// charges.
     pub fn set_terrain(&mut self, tile: TilePos, terrain: Terrain) -> Option<Terrain> {
-        self.terrain.replace(tile, terrain)
+        self.land.set_ground(tile, terrain)
+    }
+
+    /// Raises the tile under the pointer by a step, and charges for it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the park cannot pay, is bankrupt, the tile is outside it, the
+    /// land will not go any higher, something is built on it, or somebody is
+    /// standing on it. Nothing is changed when it fails.
+    ///
+    /// ```
+    /// # use openpark::park::{Land, Park};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let before = park.cash();
+    /// let tile = TilePos::new(4, 4);
+    ///
+    /// assert_eq!(park.raise(tile)?, 1);
+    /// assert_eq!(park.cash(), before - Park::LANDSCAPING);
+    /// assert_eq!(park.lower(tile)?, 0);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn raise(&mut self, tile: TilePos) -> Result<i16> {
+        self.check_landscaping(tile, Self::LANDSCAPING)?;
+
+        let height = self.land.raise(tile)?;
+        self.adjust_cash(-Self::LANDSCAPING);
+        Ok(height)
+    }
+
+    /// Digs the tile under the pointer down by a step, and charges for it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Park::raise`], but for land that will not go any lower.
+    pub fn lower(&mut self, tile: TilePos) -> Result<i16> {
+        self.check_landscaping(tile, Self::LANDSCAPING)?;
+
+        let height = self.land.lower(tile)?;
+        self.adjust_cash(-Self::LANDSCAPING);
+        Ok(height)
+    }
+
+    /// Lays a new surface on one tile, and charges for it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Park::raise`], plus anything no money will buy — see
+    /// [`Terrain::lay_cost`] — and, for ground nobody can stand on, a tile with
+    /// somebody already on it.
+    ///
+    /// ```
+    /// # use openpark::park::{Park, Terrain};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let tile = TilePos::new(4, 4);
+    ///
+    /// park.lay(tile, Terrain::Path)?;
+    /// assert_eq!(park.terrain()[tile], Terrain::Path);
+    /// assert!(park.lay(tile, Terrain::Rock).is_err(), "rock is not for sale");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn lay(&mut self, tile: TilePos, terrain: Terrain) -> Result<()> {
+        let cost = terrain
+            .lay_cost()
+            .with_context(|| format!("{} cannot be laid down", terrain.name().to_lowercase()))?;
+
+        self.check_landscaping(tile, cost)?;
+        self.land.set_ground(tile, terrain);
+        self.adjust_cash(-cost);
+        Ok(())
+    }
+
+    /// Whether [`Park::raise`] or [`Park::lower`] would be allowed here, for a
+    /// cursor that wants to say so before the click.
+    pub fn can_reshape(&self, tile: TilePos) -> bool {
+        self.check_landscaping(tile, Self::LANDSCAPING).is_ok()
+            && (self
+                .land
+                .height_at(tile)
+                .is_some_and(|height| height < Land::MAX_HEIGHT || height > Land::MIN_HEIGHT))
+    }
+
+    /// Whether [`Park::lay`] would be allowed here.
+    pub fn can_lay(&self, tile: TilePos, terrain: Terrain) -> bool {
+        terrain
+            .lay_cost()
+            .is_some_and(|cost| self.check_landscaping(tile, cost).is_ok())
+    }
+
+    /// Why the land cannot be worked here, money and all.
+    fn check_landscaping(&self, tile: TilePos, cost: Money) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot afford a shovel",
+        );
+        anyhow::ensure!(self.land.contains(tile), "{tile:?} is outside the park");
+        anyhow::ensure!(
+            self.cash >= cost,
+            "that costs {cost} and the park has {}",
+            self.cash,
+        );
+        anyhow::ensure!(
+            self.facility_at(tile).is_none(),
+            "there is something built on {tile:?}",
+        );
+        anyhow::ensure!(
+            !self.is_anybody_on(tile),
+            "somebody is standing on {tile:?}",
+        );
+
+        Ok(())
+    }
+
+    /// Whether anybody — guest or staff — is standing on `tile`.
+    ///
+    /// The land cannot be worked under somebody's feet. Without this a tile
+    /// could be raised into a pillar with a guest marooned on top of it, and a
+    /// marooned guest never reaches the gate to go home.
+    fn is_anybody_on(&self, tile: TilePos) -> bool {
+        self.guests.iter().any(|guest| guest.tile() == tile)
+            || self.staff.iter().any(|member| member.tile() == tile)
     }
 
     /// Advances the park by exactly one tick.
@@ -676,17 +811,14 @@ impl Park {
         }
 
         let Self {
-            terrain,
+            land,
             facilities,
             staff,
             rng,
             ..
         } = self;
 
-        let map = ParkMap {
-            terrain,
-            facilities,
-        };
+        let map = ParkMap { land, facilities };
         let mut finder = PathFinder::new();
 
         for member in staff.iter_mut() {
@@ -698,7 +830,8 @@ impl Park {
                 }
             }
 
-            member.advance(Self::speed_across(terrain[member.tile()]));
+            let standing_on = land.ground(member.tile()).unwrap_or(Terrain::Grass);
+            member.advance(Self::speed_across(standing_on));
         }
     }
 
@@ -751,8 +884,8 @@ impl Park {
                     continue;
                 }
 
-                if self.terrain.get(tile) == Some(&Terrain::Dirt) {
-                    self.terrain.replace(tile, Terrain::Grass);
+                if self.land.ground(tile) == Some(Terrain::Dirt) {
+                    self.land.set_ground(tile, Terrain::Grass);
                     return;
                 }
             }
@@ -792,17 +925,14 @@ impl Park {
             // Destructured so that the borrow checker can see the guests, the
             // land, what is built on it and the dice as separate things.
             let Self {
-                terrain,
+                land,
                 facilities,
                 guests,
                 rng,
                 ..
             } = self;
 
-            let map = ParkMap {
-                terrain,
-                facilities,
-            };
+            let map = ParkMap { land, facilities };
 
             // Allocates nothing until a guest actually needs a route, and reuses
             // its buffers across everyone who does.
@@ -840,7 +970,7 @@ impl Park {
                 }
 
                 let here = guest.tile();
-                let ground = terrain[here];
+                let ground = land.ground(here).unwrap_or(Terrain::Grass);
 
                 // Worn-out ground is a shabby thing to walk across.
                 if ground == Terrain::Dirt {
@@ -850,7 +980,7 @@ impl Park {
                 if !guest.is_idle() {
                     // And the walking is what wears it out in the first place.
                     if ground == Terrain::Grass
-                        && wears_from_here(terrain, here)
+                        && wears_from_here(land, here)
                         && rng.chance(Self::TRAMPLE_CHANCE)
                     {
                         trampled.push(here);
@@ -889,7 +1019,8 @@ impl Park {
                     }
                 }
 
-                guest.advance(Self::speed_across(terrain[guest.tile()]));
+                let standing_on = land.ground(guest.tile()).unwrap_or(Terrain::Grass);
+                guest.advance(Self::speed_across(standing_on));
             }
 
             (takings, sales, trampled)
@@ -902,7 +1033,7 @@ impl Park {
         }
 
         for tile in trampled {
-            self.terrain.replace(tile, Terrain::Dirt);
+            self.land.set_ground(tile, Terrain::Dirt);
         }
 
         self.adjust_cash(takings);
@@ -985,20 +1116,23 @@ impl Park {
 /// A facility blocks its own tile, which is what makes guests queue beside a
 /// stall rather than walk through it.
 struct ParkMap<'a> {
-    terrain: &'a Grid<Terrain>,
+    land: &'a Land,
     facilities: &'a Grid<Option<Shop>>,
 }
 
 impl Traversable for ParkMap<'_> {
     fn bounds(&self) -> TileBounds {
-        self.terrain.bounds()
+        self.land.terrain().bounds()
     }
 
-    fn step_cost(&self, _from: TilePos, to: TilePos) -> Option<NonZeroU32> {
+    fn step_cost(&self, from: TilePos, to: TilePos) -> Option<NonZeroU32> {
         if self.facilities.get(to)?.is_some() {
             return None;
         }
-        NonZeroU32::new(self.terrain.get(to)?.walk_cost()?)
+
+        // The shape of the land decides the rest: water and cliffs are refused,
+        // and a climb costs more than the same distance on the flat.
+        self.land.step_cost(from, to)
     }
 }
 
@@ -1007,10 +1141,10 @@ impl Traversable for ParkMap<'_> {
 /// Only grass next to a path or to ground already worn down: wear spreads from
 /// the edges of where people are already walking, which is what turns it into
 /// trails across the lawn rather than a rash of bare patches all over it.
-fn wears_from_here(terrain: &Grid<Terrain>, tile: TilePos) -> bool {
+fn wears_from_here(land: &Land, tile: TilePos) -> bool {
     tile.neighbours()
         .iter()
-        .any(|beside| matches!(terrain.get(*beside), Some(Terrain::Path | Terrain::Dirt)))
+        .any(|beside| matches!(land.ground(*beside), Some(Terrain::Path | Terrain::Dirt)))
 }
 
 /// Finds the nearest facility of a kind that a guest at `from` can actually
@@ -1064,15 +1198,15 @@ fn wander(
     for attempt in 0..Park::WANDER_ATTEMPTS {
         #[allow(clippy::cast_possible_wrap)]
         let goal = TilePos::new(
-            rng.below(map.terrain.width())? as i32,
-            rng.below(map.terrain.height())? as i32,
+            rng.below(map.land.width())? as i32,
+            rng.below(map.land.height())? as i32,
         );
 
         if goal == from {
             continue;
         }
 
-        let ground = map.terrain[goal];
+        let ground = map.land.ground(goal)?;
         let wanted = if attempt < Park::PATH_ATTEMPTS {
             ground == Terrain::Path
         } else {
@@ -1802,5 +1936,171 @@ mod tests {
         assert_eq!(loaded, park);
         assert_eq!(loaded.shop_at(priced).map(Shop::price), Some(17));
         assert_eq!(loaded.staff().len(), 2);
+    }
+    #[test]
+    fn moving_the_land_costs_money() {
+        let mut park = Park::new("Landscaping", 32, 32, 1).unwrap();
+        let tile = TilePos::new(5, 5);
+        let before = park.cash();
+
+        assert_eq!(park.raise(tile).unwrap(), 1);
+        assert_eq!(park.cash(), before - Park::LANDSCAPING);
+        assert_eq!(park.land().height_at(tile), Some(1));
+
+        assert_eq!(park.lower(tile).unwrap(), 0);
+        assert_eq!(park.cash(), before - Park::LANDSCAPING * 2);
+    }
+
+    #[test]
+    fn a_park_that_cannot_pay_cannot_dig() {
+        let mut park = Park::new("Skint", 32, 32, 1).unwrap();
+        park.adjust_cash(-park.cash());
+
+        assert!(park.raise(TilePos::new(5, 5)).is_err());
+        assert!(park.lay(TilePos::new(5, 5), Terrain::Path).is_err());
+        assert!(!park.can_reshape(TilePos::new(5, 5)));
+    }
+
+    #[test]
+    fn the_land_cannot_be_moved_under_somebody_standing_on_it() {
+        let mut park = opened_for(Park::TICKS_BETWEEN_ARRIVALS);
+        let standing_on = park.guests()[0].tile();
+
+        assert!(
+            park.raise(standing_on).is_err(),
+            "a guest was marooned on a pillar"
+        );
+        assert!(park.lower(standing_on).is_err());
+        assert!(park.lay(standing_on, Terrain::Water).is_err());
+        assert!(!park.can_reshape(standing_on));
+    }
+
+    #[test]
+    fn the_land_cannot_be_moved_under_a_building() {
+        let mut park = Park::new("Landscaping", 32, 32, 1).unwrap();
+        let tile = TilePos::new(5, 5);
+        park.build(tile, Facility::Bench).unwrap();
+
+        assert!(park.raise(tile).is_err(), "a bench was put on stilts");
+        assert!(!park.can_lay(tile, Terrain::Path));
+    }
+
+    #[test]
+    fn a_bankrupt_park_cannot_afford_a_shovel() {
+        let mut park = bankrupt_park();
+        park.adjust_cash(100_000);
+
+        assert!(park.raise(TilePos::new(5, 5)).is_err());
+        assert!(park.lay(TilePos::new(5, 5), Terrain::Path).is_err());
+    }
+
+    #[test]
+    fn laying_a_surface_costs_what_it_says_and_rock_is_not_for_sale() {
+        let mut park = Park::new("Paving", 32, 32, 1).unwrap();
+        let tile = TilePos::new(6, 6);
+        let before = park.cash();
+
+        park.lay(tile, Terrain::Path).unwrap();
+        assert_eq!(park.terrain()[tile], Terrain::Path);
+        assert_eq!(park.cash(), before - Terrain::Path.lay_cost().unwrap());
+
+        assert!(park.lay(tile, Terrain::Rock).is_err());
+        assert!(!park.can_lay(tile, Terrain::Rock));
+        assert!(park.lay(TilePos::new(-1, -1), Terrain::Path).is_err());
+    }
+
+    #[test]
+    fn the_crowd_walks_round_a_cliff_rather_than_over_it() {
+        let mut park = Park::new("Blocked", 32, 32, 5).unwrap();
+
+        // A pillar in the middle of the crossroads, too steep to climb.
+        let blocked = TilePos::new(16, 16);
+        assert_eq!(park.terrain()[blocked], Terrain::Path);
+        park.adjust_cash(10_000);
+        for _ in 0..=Land::MAX_STEP {
+            park.raise(blocked).unwrap();
+        }
+
+        let park = run(park, 3_000);
+        assert!(
+            park.guests().iter().all(|guest| guest.tile() != blocked),
+            "somebody climbed a cliff"
+        );
+        assert!(!park.guests().is_empty(), "the park emptied out instead");
+    }
+
+    #[test]
+    fn a_single_step_is_a_ramp_and_two_is_a_wall() {
+        let mut park = Park::new("Ramped", 32, 32, 5).unwrap();
+        let ramp = TilePos::new(16, 16);
+        let below = TilePos::new(16, 15);
+        assert_eq!(park.terrain()[ramp], Terrain::Path, "on the crossroads");
+
+        // A step up is dearer to cross than flat ground — that is what sends a
+        // crowd round it — but it is still a route.
+        park.raise(ramp).unwrap();
+        let mut finder = PathFinder::new();
+        {
+            let map = ParkMap {
+                land: &park.land,
+                facilities: &park.facilities,
+            };
+            assert!(
+                finder.find(&map, below, ramp).is_some(),
+                "one step turned out to be a wall"
+            );
+        }
+
+        // A second one is a cliff, and a cliff is not a route.
+        park.raise(ramp).unwrap();
+        let map = ParkMap {
+            land: &park.land,
+            facilities: &park.facilities,
+        };
+        assert!(
+            finder.find(&map, below, ramp).is_none(),
+            "somebody climbed two steps at once"
+        );
+    }
+
+    #[test]
+    fn a_new_park_has_hills_in_it_but_flat_paths() {
+        let park = Park::new("Rolling", 32, 32, 5).unwrap();
+        let land = park.land();
+
+        assert!(land.highest() > 0, "a new park came out flat");
+        assert!(
+            land.terrain()
+                .iter()
+                .filter(|(_, ground)| matches!(ground, Terrain::Path | Terrain::Water))
+                .all(|(tile, _)| land.height_at(tile) == Some(0)),
+            "a path or the lake climbed a hill"
+        );
+    }
+
+    #[test]
+    fn the_same_seed_rolls_the_same_hills() {
+        let one = Park::new("Rolling", 32, 32, 9).unwrap();
+        let two = Park::new("Rolling", 32, 32, 9).unwrap();
+        let other = Park::new("Rolling", 32, 32, 10).unwrap();
+
+        assert_eq!(one.land().heights(), two.land().heights());
+        assert_ne!(
+            one.land().heights(),
+            other.land().heights(),
+            "every seed rolled the same landscape"
+        );
+    }
+
+    #[test]
+    fn the_land_survives_a_save_with_its_hills() {
+        let mut park = Park::new("Hilly", 32, 32, 1).unwrap();
+        park.raise(TilePos::new(7, 7)).unwrap();
+        park.raise(TilePos::new(7, 7)).unwrap();
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded, park);
+        assert_eq!(loaded.land().height_at(TilePos::new(7, 7)), Some(2));
     }
 }
