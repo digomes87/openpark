@@ -4,12 +4,13 @@
 //! the route it was given; deciding where that route goes is the park's job,
 //! which keeps the walking testable without a map.
 
+use anyhow::Context;
 use isogrid::iso::{GridPoint, TilePos};
 use isogrid::render::Color;
 use isogrid::time::Tick;
 use serde::{Deserialize, Serialize};
 
-use crate::park::{Facility, Money, Needs};
+use crate::park::{Facility, Money, Needs, Shop, Walk};
 
 /// The shirts guests turn up in.
 ///
@@ -71,13 +72,8 @@ impl Plan {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Guest {
     id: u32,
-    /// The tiles left to walk, starting with the one being stood on. Never
-    /// empty: a guest is always somewhere.
-    route: Vec<TilePos>,
-    /// How far along `route` the guest is standing.
-    step: usize,
-    /// How far between `route[step]` and the tile after it, from 0 to 1.
-    progress: f32,
+    /// Where it is and where it is going.
+    walk: Walk,
     /// Which of [`SHIRTS`] this guest wears.
     shirt: u8,
     /// How the visit is going.
@@ -86,22 +82,64 @@ pub struct Guest {
     plan: Plan,
     /// What is left in its pocket.
     money: Money,
+    /// How much over the fair price this guest will stand, as a multiple of it.
+    ///
+    /// Drawn when the guest arrives, so a park full of people disagrees about
+    /// whether a stall is a rip-off rather than emptying all at once.
+    tolerance: f32,
 }
 
 impl Guest {
+    /// How much mood a guest loses on paying more than it thinks is fair.
+    const OVERCHARGED: f32 = 0.08;
+
+    /// What a guest will pay for something over the odds without doing the
+    /// arithmetic, whatever the thing normally costs.
+    const ODD_COINS: Money = 3;
+
+    /// The least and the most a guest will pay over the fair price, as a
+    /// multiple of it.
+    ///
+    /// Somebody who will not pay a penny over the odds, somebody who will pay
+    /// half again, and everybody in between.
+    pub const TOLERANCE: (f32, f32) = (1.0, 1.5);
+
     /// A guest who has just walked through the gate at `at`, carrying `money`
     /// to spend inside.
+    ///
+    /// Arrives with the average tolerance for a price. Use
+    /// [`Guest::with_tolerance`] to give it an opinion of its own.
     pub fn arriving(id: u32, at: TilePos, shirt: u8, money: Money) -> Self {
+        let (least, most) = Self::TOLERANCE;
         Self {
             id,
-            route: vec![at],
-            step: 0,
-            progress: 0.0,
+            walk: Walk::standing_at(at),
             shirt,
             needs: Needs::fresh(),
             plan: Plan::Wandering,
             money,
+            tolerance: f32::midpoint(least, most),
         }
+    }
+
+    /// The same guest, but harder or easier to sell to.
+    ///
+    /// Clamped to [`Guest::TOLERANCE`]: a guest that would pay ten times the
+    /// going rate is not a guest, it is a bug in the dice.
+    #[must_use]
+    pub fn with_tolerance(mut self, tolerance: f32) -> Self {
+        let (least, most) = Self::TOLERANCE;
+        self.tolerance = if tolerance.is_nan() {
+            least
+        } else {
+            tolerance.clamp(least, most)
+        };
+        self
+    }
+
+    /// How much over the fair price this guest will stand.
+    pub const fn tolerance(&self) -> f32 {
+        self.tolerance
     }
 
     /// Which guest this is. Unique within one park, and stable across a save.
@@ -111,31 +149,22 @@ impl Guest {
 
     /// The tile the guest is standing on, or walking away from.
     pub fn tile(&self) -> TilePos {
-        self.route[self.step]
+        self.walk.tile()
     }
 
     /// The tile the guest is walking towards, if it is walking anywhere.
     pub fn next_tile(&self) -> Option<TilePos> {
-        self.route.get(self.step + 1).copied()
+        self.walk.next_tile()
     }
 
     /// Whether the guest has run out of route and wants a new one.
     pub fn is_idle(&self) -> bool {
-        self.next_tile().is_none()
+        self.walk.is_idle()
     }
 
     /// Where the guest is, in grid space, between the two tiles of its step.
     pub fn position(&self) -> GridPoint {
-        let here = self.tile().centre();
-        let Some(next) = self.next_tile() else {
-            return here;
-        };
-
-        let there = next.centre();
-        GridPoint::ground(
-            here.x + (there.x - here.x) * self.progress,
-            here.y + (there.y - here.y) * self.progress,
-        )
+        self.walk.position()
     }
 
     /// The colour this guest draws as.
@@ -195,27 +224,75 @@ impl Guest {
     /// caller's mistake — [`Guest::can_afford`] is there to be asked first.
     ///
     /// ```
-    /// # use openpark::park::{Facility, Guest};
+    /// # use openpark::park::{Facility, Guest, Shop};
     /// # use isogrid::iso::TilePos;
     /// let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
-    /// let paid = guest.enjoy(Facility::FoodStall);
+    /// let shop = Shop::new(Facility::FoodStall);
+    /// let paid = guest.enjoy(&shop);
     ///
-    /// assert_eq!(paid, Facility::FoodStall.price());
+    /// assert_eq!(paid, shop.price());
     /// assert_eq!(guest.money(), 100 - paid);
     /// assert!(!guest.needs().wants_food());
     /// ```
-    pub fn enjoy(&mut self, facility: Facility) -> Money {
-        let price = facility.price();
+    pub fn enjoy(&mut self, shop: &Shop) -> Money {
+        let price = shop.price();
         if !self.can_afford(price) {
             return 0;
         }
 
         self.money -= price;
-        match facility {
+        match shop.kind() {
             Facility::FoodStall => self.needs.eat(),
             Facility::Bench => self.needs.rest(),
         }
+
+        // Paid, used, and resentful about it: the guest got what it came for
+        // and still thinks it was robbed.
+        if price > self.most_it_would_pay(shop.kind()) {
+            self.needs.dislike(Self::OVERCHARGED);
+        }
         price
+    }
+
+    /// The most this guest would hand over for something of `kind`.
+    ///
+    /// A multiple of the fair price, or the fair price plus the loose change in
+    /// its pocket, whichever is kinder — otherwise nobody would ever pay for
+    /// something that is normally free, and a bench could never be a business.
+    fn most_it_would_pay(&self, kind: Facility) -> Money {
+        let fair = kind.price();
+        #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+        let by_tolerance = (fair as f32 * self.tolerance) as Money;
+        by_tolerance.max(fair.saturating_add(Self::ODD_COINS))
+    }
+
+    /// Whether this guest would walk over to `shop` and pay what it asks.
+    ///
+    /// Two separate refusals: what is in its pocket, and what it thinks the
+    /// thing is worth. A free bench passes both, always.
+    ///
+    /// ```
+    /// # use openpark::park::{Facility, Guest, Shop};
+    /// # use isogrid::iso::TilePos;
+    /// let guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
+    /// let mut shop = Shop::new(Facility::FoodStall);
+    /// assert!(guest.will_pay(&shop), "the going rate is fine");
+    ///
+    /// shop.set_price(Shop::MAX_PRICE);
+    /// assert!(!guest.will_pay(&shop), "that is a rip-off");
+    /// ```
+    pub fn will_pay(&self, shop: &Shop) -> bool {
+        self.can_afford(shop.price()) && shop.price() <= self.most_it_would_pay(shop.kind())
+    }
+
+    /// Something about the park spoils the visit a little.
+    pub fn put_off(&mut self, amount: f32) {
+        self.needs.dislike(amount);
+    }
+
+    /// Something about the park is a treat.
+    pub fn cheer_up(&mut self, amount: f32) {
+        self.needs.enjoy_yourself(amount);
     }
 
     /// One tick of being in the park: the guest gets hungrier and more tired,
@@ -236,45 +313,14 @@ impl Guest {
     ///
     /// Fails if the route is empty or does not start at [`Guest::tile`].
     pub fn follow(&mut self, route: Vec<TilePos>) -> anyhow::Result<()> {
-        anyhow::ensure!(!route.is_empty(), "a guest cannot follow an empty route");
-        anyhow::ensure!(
-            route[0] == self.tile(),
-            "a route from {:?} does not start where guest {} is standing, at {:?}",
-            route[0],
-            self.id,
-            self.tile(),
-        );
-
-        self.route = route;
-        self.step = 0;
-        self.progress = 0.0;
-        Ok(())
+        self.walk
+            .follow(route)
+            .with_context(|| format!("guest {} cannot follow that route", self.id))
     }
 
     /// Walks `distance` tiles along the route, stopping at the end of it.
-    ///
-    /// Ignores a distance that is negative or not a number, so that a bad speed
-    /// leaves a guest standing rather than teleporting it somewhere strange.
     pub fn advance(&mut self, distance: f32) {
-        if distance.is_nan() || distance <= 0.0 {
-            return;
-        }
-
-        let mut left = distance;
-        while self.next_tile().is_some() {
-            let to_the_next_tile = 1.0 - self.progress;
-            if left < to_the_next_tile {
-                self.progress += left;
-                return;
-            }
-
-            left -= to_the_next_tile;
-            self.step += 1;
-            self.progress = 0.0;
-        }
-
-        // Out of route: stand on the last tile rather than past it.
-        self.progress = 0.0;
+        self.walk.advance(distance);
     }
 }
 
@@ -410,7 +456,7 @@ mod tests {
         }
         assert!(guest.needs().wants_food());
 
-        let paid = guest.enjoy(Facility::FoodStall);
+        let paid = guest.enjoy(&Shop::new(Facility::FoodStall));
         assert_eq!(paid, Facility::FoodStall.price());
         assert_eq!(guest.money(), 100 - paid);
         assert!(!guest.needs().wants_food());
@@ -419,7 +465,7 @@ mod tests {
     #[test]
     fn sitting_down_costs_nothing() {
         let mut guest = Guest::arriving(1, TilePos::ORIGIN, 0, 100);
-        assert_eq!(guest.enjoy(Facility::Bench), 0);
+        assert_eq!(guest.enjoy(&Shop::new(Facility::Bench)), 0);
         assert_eq!(guest.money(), 100);
     }
 
@@ -431,7 +477,7 @@ mod tests {
         }
 
         assert!(!guest.can_afford(Facility::FoodStall.price()));
-        assert_eq!(guest.enjoy(Facility::FoodStall), 0);
+        assert_eq!(guest.enjoy(&Shop::new(Facility::FoodStall)), 0);
         assert!(guest.needs().wants_food(), "it was fed for free");
         assert_eq!(guest.money(), 0);
     }

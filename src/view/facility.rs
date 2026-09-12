@@ -73,10 +73,33 @@ fn draw_facility(canvas: &mut dyn Renderer, base: ScreenPoint, scale: f32, facil
 }
 
 /// The label for the tile under the pointer, for the HUD to show.
+///
+/// Whoever is standing on the tile comes first, then whatever is built on it
+/// with the price on its board and what it has taken, then the bare ground.
 pub fn describe(park: &Park, tile: TilePos) -> String {
-    park.facility_at(tile).map_or_else(
+    if let Some(member) = park.staff().iter().find(|member| member.tile() == tile) {
+        return format!(
+            "{} at {}, {} — {} a bill",
+            member.kind().name(),
+            tile.x,
+            tile.y,
+            member.wage()
+        );
+    }
+
+    park.shop_at(tile).map_or_else(
         || format!("{:?} at {}, {}", park.terrain()[tile], tile.x, tile.y),
-        |facility| format!("{} at {}, {}", facility.name(), tile.x, tile.y),
+        |shop| {
+            format!(
+                "{} at {}, {} — {} each, {} taken from {}",
+                shop.kind().name(),
+                tile.x,
+                tile.y,
+                shop.price(),
+                shop.takings(),
+                shop.customers()
+            )
+        },
     )
 }
 
@@ -187,10 +210,10 @@ mod tests {
         let built = park
             .facilities()
             .iter()
-            .find_map(|(tile, facility)| facility.map(|facility| (tile, facility)))
+            .find_map(|(tile, built)| built.map(|shop| (tile, shop)))
             .expect("something is built");
 
-        assert!(describe(&park, built.0).starts_with(built.1.name()));
+        assert!(describe(&park, built.0).starts_with(built.1.kind().name()));
 
         let empty = park
             .terrain()

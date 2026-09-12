@@ -3,12 +3,18 @@
 mod facility;
 mod guest;
 mod needs;
+mod shop;
+mod staff;
 mod terrain;
+mod walk;
 
 pub use facility::Facility;
 pub use guest::{Guest, Plan};
 pub use needs::Needs;
+pub use shop::Shop;
+pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
+pub use walk::Walk;
 
 use core::num::NonZeroU32;
 
@@ -34,8 +40,9 @@ pub type Money = i64;
 pub struct Park {
     name: String,
     terrain: Grid<Terrain>,
-    facilities: Grid<Option<Facility>>,
+    facilities: Grid<Option<Shop>>,
     guests: Vec<Guest>,
+    staff: Vec<Staff>,
     cash: Money,
     rng: Rng,
     tick: Tick,
@@ -44,6 +51,10 @@ pub struct Park {
     next_guest_id: u32,
     /// How many guests have walked back out again.
     guests_who_left: u32,
+    /// The id the next member of staff hired will get.
+    next_staff_id: u32,
+    /// When the park ran out of credit, if it has.
+    bankrupt_since: Option<Tick>,
 }
 
 impl Park {
@@ -58,6 +69,15 @@ impl Park {
 
     /// How many guests the park holds before the queue outside stops moving.
     pub const CAPACITY: usize = 120;
+
+    /// How many ticks pass between one wage bill and the next.
+    ///
+    /// Thirty seconds at [`isogrid::time::TickRate::CLASSIC`]: often enough
+    /// that a park full of staff and empty of guests is felt within a visit.
+    pub const TICKS_PER_WAGE_BILL: u64 = 1_200;
+
+    /// How far into debt a park is allowed to go before the bank closes it.
+    pub const DEBT_LIMIT: Money = -5_000;
 
     /// How many ticks pass between arrivals.
     ///
@@ -86,6 +106,21 @@ impl Park {
     /// How many of the nearest candidates a guest tries before deciding a
     /// facility is out of reach.
     const FACILITY_ATTEMPTS: usize = 4;
+
+    /// The chance that one tick of a guest walking on grass wears it to dirt.
+    ///
+    /// Low enough that one guest crossing a lawn leaves it alone, high enough
+    /// that the route everybody takes to the stall goes bare within a visit.
+    const TRAMPLE_CHANCE: f32 = 0.002;
+
+    /// How much mood a guest loses per tick of standing on worn-out ground.
+    const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
+
+    /// How much mood a guest gains per tick of walking near an entertainer.
+    const ENTERTAINED: f32 = 1.0 / 1_500.0;
+
+    /// How many ticks a handyman takes to put one tile of dirt back to grass.
+    const TICKS_PER_TIDY: u64 = 200;
 
     /// How many of those attempts insist on a goal that is actually a path.
     ///
@@ -152,11 +187,14 @@ impl Park {
             terrain,
             facilities,
             guests: Vec::new(),
+            staff: Vec::new(),
             cash: Self::STARTING_CASH,
             rng,
             tick: Tick::ZERO,
             next_guest_id: 0,
             guests_who_left: 0,
+            next_staff_id: 0,
+            bankrupt_since: None,
         };
 
         park.open_with_the_basics();
@@ -201,13 +239,74 @@ impl Park {
     }
 
     /// What has been built on it.
-    pub const fn facilities(&self) -> &Grid<Option<Facility>> {
+    pub const fn facilities(&self) -> &Grid<Option<Shop>> {
         &self.facilities
     }
 
     /// What stands on one tile, if anything does.
     pub fn facility_at(&self, tile: TilePos) -> Option<Facility> {
+        self.shop_at(tile).map(Shop::kind)
+    }
+
+    /// The shop standing on one tile, with its price and its till.
+    pub fn shop_at(&self, tile: TilePos) -> Option<Shop> {
         self.facilities.get(tile).copied().flatten()
+    }
+
+    /// Sets what the shop on `tile` charges, returning the price on the board.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is nothing on that tile to price.
+    ///
+    /// ```
+    /// # use openpark::park::{Facility, Park, Shop};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let tile = TilePos::new(2, 2);
+    /// park.build(tile, Facility::FoodStall)?;
+    ///
+    /// assert_eq!(park.set_price(tile, 18)?, 18);
+    /// assert_eq!(park.set_price(tile, 10_000)?, Shop::MAX_PRICE, "clamped");
+    /// assert!(park.set_price(TilePos::new(3, 3), 5).is_err(), "nothing there");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn set_price(&mut self, tile: TilePos, price: Money) -> Result<Money> {
+        self.repricing(tile, |shop| shop.set_price(price))
+    }
+
+    /// Puts the price on `tile` up by one step.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is nothing on that tile to price.
+    pub fn raise_price(&mut self, tile: TilePos) -> Result<Money> {
+        self.repricing(tile, Shop::raise_price)
+    }
+
+    /// Brings the price on `tile` down by one step.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is nothing on that tile to price.
+    pub fn lower_price(&mut self, tile: TilePos) -> Result<Money> {
+        self.repricing(tile, Shop::lower_price)
+    }
+
+    /// Changes the price of whatever is on `tile`, however it is being changed.
+    fn repricing(
+        &mut self,
+        tile: TilePos,
+        change: impl FnOnce(&mut Shop) -> Money,
+    ) -> Result<Money> {
+        let shop = self
+            .facilities
+            .get_mut(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?
+            .as_mut()
+            .with_context(|| format!("there is nothing on {tile:?} to put a price on"))?;
+
+        Ok(change(shop))
     }
 
     /// Builds a facility, taking its cost out of the bank.
@@ -234,7 +333,7 @@ impl Park {
     /// ```
     pub fn build(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
         self.check_build(tile, facility)?;
-        self.facilities.replace(tile, Some(facility));
+        self.facilities.replace(tile, Some(Shop::new(facility)));
         self.adjust_cash(-facility.build_cost());
         Ok(())
     }
@@ -247,6 +346,10 @@ impl Park {
 
     /// Why a facility cannot be bought for a tile, as an error worth showing.
     fn check_build(&self, tile: TilePos, facility: Facility) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot buy anything",
+        );
         anyhow::ensure!(
             self.cash >= facility.build_cost(),
             "a {} costs {} and the park has {}",
@@ -281,7 +384,7 @@ impl Park {
     /// Puts a facility up without charging for it.
     fn put_up(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
         self.check_ground(tile, facility)?;
-        self.facilities.replace(tile, Some(facility));
+        self.facilities.replace(tile, Some(Shop::new(facility)));
         Ok(())
     }
 
@@ -289,7 +392,7 @@ impl Park {
     ///
     /// Nothing comes back for it: a demolished stall is a loss, which is what
     /// makes building one a decision.
-    pub fn demolish(&mut self, tile: TilePos) -> Option<Facility> {
+    pub fn demolish(&mut self, tile: TilePos) -> Option<Shop> {
         self.facilities.replace(tile, None).flatten()
     }
 
@@ -382,6 +485,112 @@ impl Park {
         self.cash = self.cash.saturating_add(amount);
     }
 
+    /// Everybody the park is paying.
+    pub fn staff(&self) -> &[Staff] {
+        &self.staff
+    }
+
+    /// Takes somebody on, charging the one-off cost of hiring them.
+    ///
+    /// They start at the gate, like everybody else, and walk in from there.
+    /// Returns the id they were given, so they can be fired again later.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the park cannot afford the hiring cost, or is bankrupt.
+    ///
+    /// ```
+    /// # use openpark::park::{Park, StaffKind};
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let before = park.cash();
+    ///
+    /// let id = park.hire(StaffKind::Handyman)?;
+    /// assert_eq!(park.staff().len(), 1);
+    /// assert_eq!(park.cash(), before - StaffKind::Handyman.hire_cost());
+    /// assert!(park.fire(id).is_some());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn hire(&mut self, kind: StaffKind) -> Result<u32> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot take anybody on",
+        );
+        anyhow::ensure!(
+            self.cash >= kind.hire_cost(),
+            "hiring a {} costs {} and the park has {}",
+            kind.name().to_lowercase(),
+            kind.hire_cost(),
+            self.cash,
+        );
+
+        let id = self.next_staff_id;
+        self.next_staff_id = self.next_staff_id.wrapping_add(1);
+        self.staff.push(Staff::hired(id, kind, self.entrance()));
+        self.adjust_cash(-kind.hire_cost());
+        Ok(id)
+    }
+
+    /// Lets somebody go, returning who left. No severance: they walk off the
+    /// map, and the wage bill is lighter from the next one on.
+    pub fn fire(&mut self, id: u32) -> Option<Staff> {
+        let at = self.staff.iter().position(|staff| staff.id() == id)?;
+        Some(self.staff.remove(at))
+    }
+
+    /// Lets go of whoever is standing on `tile`, for a pointer that has one of
+    /// them under it rather than an id.
+    pub fn fire_at(&mut self, tile: TilePos) -> Option<Staff> {
+        let at = self.staff.iter().position(|staff| staff.tile() == tile)?;
+        Some(self.staff.remove(at))
+    }
+
+    /// What the park owes every [`Park::TICKS_PER_WAGE_BILL`]: every wage, plus
+    /// the upkeep of everything standing on the land.
+    ///
+    /// ```
+    /// # use openpark::park::{Park, StaffKind};
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let before = park.wage_bill();
+    ///
+    /// park.hire(StaffKind::Entertainer)?;
+    /// assert_eq!(park.wage_bill(), before + StaffKind::Entertainer.wage());
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn wage_bill(&self) -> Money {
+        let wages: Money = self.staff.iter().map(Staff::wage).sum();
+        let upkeep: Money = self
+            .facilities
+            .iter()
+            .filter_map(|(_, built)| built.as_ref())
+            .map(|shop| shop.upkeep())
+            .sum();
+
+        wages.saturating_add(upkeep)
+    }
+
+    /// Everything every till has taken since the park opened.
+    pub fn takings(&self) -> Money {
+        self.facilities
+            .iter()
+            .filter_map(|(_, built)| built.as_ref())
+            .map(|shop| shop.takings())
+            .sum()
+    }
+
+    /// Whether the bank has closed the park.
+    ///
+    /// A bankrupt park keeps its land and its buildings, and keeps drawing
+    /// them, but nobody new comes through the gate, everybody inside heads for
+    /// it, and nothing more can be bought.
+    pub const fn is_bankrupt(&self) -> bool {
+        self.bankrupt_since.is_some()
+    }
+
+    /// When the park went bankrupt, if it has.
+    pub const fn bankrupt_since(&self) -> Option<Tick> {
+        self.bankrupt_since
+    }
+
     /// Replaces the terrain of one tile, returning what was there.
     ///
     /// Returns `None` and changes nothing if the tile is outside the park.
@@ -407,9 +616,147 @@ impl Park {
     /// ```
     pub fn tick_once(&mut self) {
         self.tick = self.tick.after(1);
-        self.admit_a_guest();
+
+        // A closed park has nobody at the gate to sell a ticket.
+        if !self.is_bankrupt() {
+            self.admit_a_guest();
+        }
+
         self.walk_the_guests();
+        self.walk_the_staff();
+        self.do_the_rounds();
+
+        if self.tick.is_multiple_of(Self::TICKS_PER_WAGE_BILL) {
+            self.pay_the_bills();
+            self.check_solvency();
+        }
+
         self.show_out_the_guests();
+    }
+
+    /// Pays every wage and every bit of upkeep, once a wage bill is due.
+    fn pay_the_bills(&mut self) {
+        let bill = self.wage_bill();
+        if bill == 0 {
+            return;
+        }
+
+        self.adjust_cash(-bill);
+        tracing::debug!(bill, cash = self.cash, "the park paid its bills");
+    }
+
+    /// Closes the park if it has run past [`Park::DEBT_LIMIT`].
+    ///
+    /// Bankruptcy is one-way: there is no coming back from it inside a game,
+    /// only starting another park.
+    fn check_solvency(&mut self) {
+        if self.is_bankrupt() || self.cash >= Self::DEBT_LIMIT {
+            return;
+        }
+
+        self.bankrupt_since = Some(self.tick);
+        tracing::warn!(
+            cash = self.cash,
+            tick = self.tick.get(),
+            "the park is bankrupt"
+        );
+        for guest in &mut self.guests {
+            guest.decide(Plan::GoingHome);
+        }
+    }
+
+    /// Moves every member of staff one tick's worth along their route, and
+    /// gives them somewhere new to be when they run out of one.
+    ///
+    /// Staff wander for now: a handyman with a round to walk and a queue to
+    /// prioritise is a job for the day there are rides to break down.
+    fn walk_the_staff(&mut self) {
+        if self.staff.is_empty() {
+            return;
+        }
+
+        let Self {
+            terrain,
+            facilities,
+            staff,
+            rng,
+            ..
+        } = self;
+
+        let map = ParkMap {
+            terrain,
+            facilities,
+        };
+        let mut finder = PathFinder::new();
+
+        for member in staff.iter_mut() {
+            if member.is_idle() {
+                if let Some(route) = wander(&map, rng, &mut finder, member.tile()) {
+                    if let Err(error) = member.follow(route) {
+                        tracing::warn!(%error, staff = member.id(), "ignoring an impossible route");
+                    }
+                }
+            }
+
+            member.advance(Self::speed_across(terrain[member.tile()]));
+        }
+    }
+
+    /// Lets every member of staff do the job they are paid for.
+    fn do_the_rounds(&mut self) {
+        if self.staff.is_empty() {
+            return;
+        }
+
+        // Copied out first: the work changes the guests and the land, both of
+        // which the staff themselves are standing in.
+        let rounds: Vec<(StaffKind, TilePos)> = self
+            .staff
+            .iter()
+            .map(|member| (member.kind(), member.tile()))
+            .collect();
+        let tidying = self.tick.is_multiple_of(Self::TICKS_PER_TIDY);
+
+        for (kind, at) in rounds {
+            match kind {
+                StaffKind::Entertainer => {
+                    for guest in &mut self.guests {
+                        if at.manhattan_distance(guest.tile()) <= kind.reach() {
+                            guest.cheer_up(Self::ENTERTAINED);
+                        }
+                    }
+                }
+                StaffKind::Handyman => {
+                    if tidying {
+                        self.tidy_up_around(at, kind.reach());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Puts one tile of worn ground within `reach` of `at` back to grass.
+    ///
+    /// One tile per visit rather than all of them: a single handyman cannot
+    /// keep up with a crowd, which is what makes hiring a second one a
+    /// decision.
+    fn tidy_up_around(&mut self, at: TilePos, reach: u32) {
+        #[allow(clippy::cast_possible_wrap)]
+        let span = reach as i32;
+
+        for dy in -span..=span {
+            for dx in -span..=span {
+                let tile = at.offset(dx, dy);
+                if at.manhattan_distance(tile) > reach {
+                    continue;
+                }
+
+                if self.terrain.get(tile) == Some(&Terrain::Dirt) {
+                    self.terrain.replace(tile, Terrain::Grass);
+                    return;
+                }
+            }
+        }
     }
 
     /// Lets one guest in, if one is due and there is room.
@@ -436,81 +783,126 @@ impl Park {
     fn walk_the_guests(&mut self) {
         let entrance = self.entrance();
         let now = self.tick;
+        let closed = self.is_bankrupt();
 
-        // Destructured so that the borrow checker can see the guests, the land,
-        // what is built on it and the dice as separate things.
-        let Self {
-            terrain,
-            facilities,
-            guests,
-            rng,
-            ..
-        } = self;
+        // Everything the guests do to the park is collected as it happens and
+        // applied afterwards: the land and the tills are borrowed out to the
+        // pathfinder for the length of the walk.
+        let (takings, sales, trampled) = {
+            // Destructured so that the borrow checker can see the guests, the
+            // land, what is built on it and the dice as separate things.
+            let Self {
+                terrain,
+                facilities,
+                guests,
+                rng,
+                ..
+            } = self;
 
-        let map = ParkMap {
-            terrain,
-            facilities,
-        };
+            let map = ParkMap {
+                terrain,
+                facilities,
+            };
 
-        // Allocates nothing until a guest actually needs a route, and reuses
-        // its buffers across everyone who does.
-        let mut finder = PathFinder::new();
-        let mut takings = 0;
+            // Allocates nothing until a guest actually needs a route, and reuses
+            // its buffers across everyone who does.
+            let mut finder = PathFinder::new();
+            let mut takings = 0;
+            let mut sales: Vec<(TilePos, Money)> = Vec::new();
+            let mut trampled: Vec<TilePos> = Vec::new();
 
-        for guest in guests.iter_mut() {
-            guest.live();
+            for guest in guests.iter_mut() {
+                guest.live();
 
-            // Someone in the middle of a meal or a sit down is busy.
-            if let Plan::Using { facility, until } = guest.plan() {
-                if now < until {
+                // A park the bank has closed cannot talk anybody into staying.
+                if closed {
+                    guest.decide(Plan::GoingHome);
+                }
+
+                // Someone in the middle of a meal or a sit down is busy.
+                if let Plan::Using { facility, until } = guest.plan() {
+                    if now < until {
+                        continue;
+                    }
+
+                    if let Some(shop) = facilities.get(facility).copied().flatten() {
+                        let paid = guest.enjoy(&shop);
+                        if paid > 0 {
+                            takings += paid;
+                            sales.push((facility, paid));
+                        }
+                    }
+                    guest.decide(Plan::Wandering);
+                }
+
+                if guest.needs().is_fed_up() {
+                    guest.decide(Plan::GoingHome);
+                }
+
+                let here = guest.tile();
+                let ground = terrain[here];
+
+                // Worn-out ground is a shabby thing to walk across.
+                if ground == Terrain::Dirt {
+                    guest.put_off(Self::DIRT_IS_DREARY);
+                }
+
+                if !guest.is_idle() {
+                    // And the walking is what wears it out in the first place.
+                    if ground == Terrain::Grass
+                        && wears_from_here(terrain, here)
+                        && rng.chance(Self::TRAMPLE_CHANCE)
+                    {
+                        trampled.push(here);
+                    }
+
+                    guest.advance(Self::speed_across(ground));
                     continue;
                 }
 
-                if let Some(kind) = facilities.get(facility).copied().flatten() {
-                    takings += guest.enjoy(kind);
-                }
-                guest.decide(Plan::Wandering);
-            }
-
-            if guest.needs().is_fed_up() {
-                guest.decide(Plan::GoingHome);
-            }
-
-            if !guest.is_idle() {
-                guest.advance(Self::speed_across(terrain[guest.tile()]));
-                continue;
-            }
-
-            // Arrived next to what it came for: stop and use it.
-            if let Plan::Visiting { facility } = guest.plan() {
-                if guest.tile().neighbours().contains(&facility) {
-                    if let Some(kind) = facilities.get(facility).copied().flatten() {
-                        guest.decide(Plan::Using {
-                            facility,
-                            until: now.after(kind.ticks_to_use()),
-                        });
-                        continue;
+                // Arrived next to what it came for: stop and use it.
+                if let Plan::Visiting { facility } = guest.plan() {
+                    if guest.tile().neighbours().contains(&facility) {
+                        if let Some(shop) = facilities.get(facility).copied().flatten() {
+                            guest.decide(Plan::Using {
+                                facility,
+                                until: now.after(shop.kind().ticks_to_use()),
+                            });
+                            continue;
+                        }
                     }
                 }
+
+                let route = match Self::what_next(guest, &map, rng, &mut finder, entrance) {
+                    Some((plan, route)) => {
+                        guest.decide(plan);
+                        Some(route)
+                    }
+                    None => None,
+                };
+
+                if let Some(route) = route {
+                    if let Err(error) = guest.follow(route) {
+                        // Only reachable if the pathfinder returned a route
+                        // starting somewhere other than where it was asked to.
+                        tracing::warn!(%error, guest = guest.id(), "ignoring an impossible route");
+                    }
+                }
+
+                guest.advance(Self::speed_across(terrain[guest.tile()]));
             }
 
-            let route = match Self::what_next(guest, &map, rng, &mut finder, entrance) {
-                Some((plan, route)) => {
-                    guest.decide(plan);
-                    Some(route)
-                }
-                None => None,
-            };
+            (takings, sales, trampled)
+        };
 
-            if let Some(route) = route {
-                if let Err(error) = guest.follow(route) {
-                    // Only reachable if the pathfinder returned a route
-                    // starting somewhere other than where it was asked to.
-                    tracing::warn!(%error, guest = guest.id(), "ignoring an impossible route");
-                }
+        for (tile, amount) in sales {
+            if let Some(Some(shop)) = self.facilities.get_mut(tile) {
+                shop.take(amount);
             }
+        }
 
-            guest.advance(Self::speed_across(terrain[guest.tile()]));
+        for tile in trampled {
+            self.terrain.replace(tile, Terrain::Dirt);
         }
 
         self.adjust_cash(takings);
@@ -537,7 +929,7 @@ impl Park {
         }
 
         if let Some(wanted) = Self::what_it_wants(guest) {
-            if let Some((facility, route)) = nearest_facility(map, finder, from, wanted) {
+            if let Some((facility, route)) = nearest_facility(map, finder, from, wanted, guest) {
                 return Some((Plan::Visiting { facility }, route));
             }
         }
@@ -547,10 +939,11 @@ impl Park {
 
     /// What the guest would go out of its way for, if anything.
     ///
-    /// Hunger first: it is the need that ends a visit, and a guest that cannot
-    /// afford the price has no reason to walk to the stall.
+    /// Hunger first: it is the need that ends a visit. What the guest can
+    /// afford, and what it thinks is a fair price, is settled per shop by
+    /// [`nearest_facility`] — two stalls in one park need not agree on either.
     fn what_it_wants(guest: &Guest) -> Option<Facility> {
-        if guest.needs().wants_food() && guest.can_afford(Facility::FoodStall.price()) {
+        if guest.needs().wants_food() {
             return Some(Facility::FoodStall);
         }
         if guest.needs().wants_a_sit_down() {
@@ -593,7 +986,7 @@ impl Park {
 /// stall rather than walk through it.
 struct ParkMap<'a> {
     terrain: &'a Grid<Terrain>,
-    facilities: &'a Grid<Option<Facility>>,
+    facilities: &'a Grid<Option<Shop>>,
 }
 
 impl Traversable for ParkMap<'_> {
@@ -609,22 +1002,39 @@ impl Traversable for ParkMap<'_> {
     }
 }
 
+/// Whether a tile of grass is somewhere wear would actually start.
+///
+/// Only grass next to a path or to ground already worn down: wear spreads from
+/// the edges of where people are already walking, which is what turns it into
+/// trails across the lawn rather than a rash of bare patches all over it.
+fn wears_from_here(terrain: &Grid<Terrain>, tile: TilePos) -> bool {
+    tile.neighbours()
+        .iter()
+        .any(|beside| matches!(terrain.get(*beside), Some(Terrain::Path | Terrain::Dirt)))
+}
+
 /// Finds the nearest facility of a kind that a guest at `from` can actually
-/// walk up to, and the route to the tile it would stand on.
+/// walk up to and will pay for, and the route to the tile it would stand on.
 ///
 /// Only the [`Park::FACILITY_ATTEMPTS`] nearest are tried: past that the walk
 /// is long enough that the guest may as well wander and ask again later.
+/// Anything charging more than the guest thinks it is worth is not a candidate
+/// at all — an overpriced stall is invisible rather than disappointing.
 fn nearest_facility(
     map: &ParkMap<'_>,
     finder: &mut PathFinder,
     from: TilePos,
     wanted: Facility,
+    guest: &Guest,
 ) -> Option<(TilePos, Vec<TilePos>)> {
     let mut candidates: Vec<(u32, TilePos)> = map
         .facilities
         .iter()
-        .filter(|(_, built)| **built == Some(wanted))
-        .map(|(tile, _)| (from.manhattan_distance(tile), tile))
+        .filter_map(|(tile, built)| {
+            let shop = (*built)?;
+            (shop.kind() == wanted && guest.will_pay(&shop))
+                .then_some((from.manhattan_distance(tile), tile))
+        })
         .collect();
     candidates.sort_unstable();
 
@@ -859,15 +1269,47 @@ mod tests {
     #[test]
     fn the_crowd_prefers_the_paths_to_the_grass() {
         let park = opened_for(3_000);
-        let on_a_path = park
-            .guests()
-            .iter()
-            .filter(|guest| park.terrain()[guest.tile()] == Terrain::Path)
-            .count();
+
+        // Measured per tile rather than per guest: a crossroads is a sliver of
+        // the map, so a handful of guests standing on it is already a crowd,
+        // and the lawn would win on headcount alone however unpopular it is.
+        let crowding = |wanted: Terrain| {
+            let tiles = park
+                .terrain()
+                .iter()
+                .filter(|(_, ground)| **ground == wanted)
+                .count();
+            let guests = park
+                .guests()
+                .iter()
+                .filter(|guest| park.terrain()[guest.tile()] == wanted)
+                .count();
+
+            #[allow(clippy::cast_precision_loss)]
+            let crowding = guests as f32 / tiles.max(1) as f32;
+            crowding
+        };
+
+        let on_a_path = crowding(Terrain::Path);
+        let on_the_grass = crowding(Terrain::Grass);
         assert!(
-            on_a_path * 2 > park.guests().len(),
-            "only {on_a_path} of {} guests stuck to the paths",
-            park.guests().len()
+            on_a_path > on_the_grass * 2.0,
+            "the paths are {on_a_path} deep and the grass {on_the_grass}"
+        );
+    }
+
+    #[test]
+    fn the_crowd_wears_its_own_shortcuts_into_the_grass() {
+        let park = opened_for(6_000);
+        let worn = park
+            .terrain()
+            .iter()
+            .filter(|(_, ground)| **ground == Terrain::Dirt)
+            .count();
+
+        assert!(
+            worn > 0,
+            "a park opens with no bare earth on it, so every patch of it was walked there"
         );
     }
 
@@ -1094,5 +1536,271 @@ mod tests {
 
         let json = serde_json::to_string(&park).unwrap();
         assert_eq!(serde_json::from_str::<Park>(&json).unwrap(), park);
+    }
+    #[test]
+    fn the_bills_come_out_of_the_bank() {
+        let mut park = Park::new("Overheads", 32, 32, 5).unwrap();
+        for tile in park.terrain().positions().collect::<Vec<_>>() {
+            park.demolish(tile);
+        }
+        park.hire(StaffKind::Handyman).unwrap();
+        let bill = park.wage_bill();
+        assert_eq!(bill, StaffKind::Handyman.wage(), "nothing else is standing");
+
+        let before = park.cash();
+        let park = run(park, Park::TICKS_PER_WAGE_BILL);
+        assert_eq!(
+            park.cash(),
+            before + Park::ADMISSION * 20 - bill,
+            "twenty tickets sold and one wage bill paid"
+        );
+    }
+
+    #[test]
+    fn upkeep_is_owed_on_everything_standing() {
+        let park = Park::new("Overheads", 32, 32, 5).unwrap();
+        let standing: Money = park
+            .facilities()
+            .iter()
+            .filter_map(|(_, built)| built.as_ref())
+            .map(|shop| shop.upkeep())
+            .sum();
+
+        assert!(standing > 0, "a new park opens with something on it");
+        assert_eq!(park.wage_bill(), standing, "and nobody on the payroll");
+    }
+
+    #[test]
+    fn a_park_that_runs_out_of_credit_goes_bankrupt() {
+        let mut park = Park::new("Broke", 32, 32, 5).unwrap();
+        assert!(!park.is_bankrupt(), "a park opens solvent");
+
+        // Deep enough that a wage bill's worth of ticket sales cannot climb
+        // back out of it before the bank looks.
+        park.adjust_cash(Park::DEBT_LIMIT * 2 - park.cash());
+        let park = run(park, Park::TICKS_PER_WAGE_BILL);
+
+        assert!(park.is_bankrupt(), "the bank let {} through", park.cash());
+        assert_eq!(
+            park.bankrupt_since(),
+            Some(Tick::new(Park::TICKS_PER_WAGE_BILL))
+        );
+    }
+
+    /// A park already past its debt limit, closed by the bank.
+    fn bankrupt_park() -> Park {
+        let mut park = Park::new("Broke", 32, 32, 5).unwrap();
+        park.adjust_cash(Park::DEBT_LIMIT * 2 - park.cash());
+        let park = run(park, Park::TICKS_PER_WAGE_BILL);
+        assert!(park.is_bankrupt());
+        park
+    }
+
+    #[test]
+    fn a_bankrupt_park_sells_no_more_tickets() {
+        let park = bankrupt_park();
+        let inside = park.guests().len();
+        let cash = park.cash();
+
+        let park = run(park, Park::TICKS_BETWEEN_ARRIVALS * 4);
+        assert!(park.guests().len() <= inside, "somebody got in anyway");
+        assert!(park.cash() <= cash, "somebody paid at the gate");
+    }
+
+    #[test]
+    fn a_bankrupt_park_sends_everybody_home() {
+        let park = bankrupt_park();
+        assert!(
+            park.guests().iter().all(Guest::is_going_home),
+            "somebody is still enjoying themselves"
+        );
+
+        let park = run(park, A_WHOLE_VISIT);
+        assert!(park.guests().is_empty(), "the park never emptied out");
+    }
+
+    #[test]
+    fn a_bankrupt_park_cannot_buy_anything() {
+        let mut park = bankrupt_park();
+        park.adjust_cash(100_000);
+
+        assert!(
+            park.build(TilePos::new(3, 3), Facility::Bench).is_err(),
+            "a bankrupt park went shopping"
+        );
+        assert!(park.hire(StaffKind::Handyman).is_err());
+    }
+
+    #[test]
+    fn nobody_pays_over_the_odds() {
+        let mut park = Park::new("Rip Off", 32, 32, 5).unwrap();
+        let stalls: Vec<TilePos> = park
+            .facilities()
+            .iter()
+            .filter(|(_, built)| built.is_some_and(|shop| shop.kind() == Facility::FoodStall))
+            .map(|(tile, _)| tile)
+            .collect();
+        assert!(!stalls.is_empty(), "there is nothing to overcharge for");
+
+        for tile in stalls {
+            park.set_price(tile, Shop::MAX_PRICE).unwrap();
+        }
+
+        let park = run(park, A_WHOLE_VISIT);
+        assert_eq!(park.takings(), 0, "somebody paid {}", Shop::MAX_PRICE);
+    }
+
+    #[test]
+    fn a_fair_price_fills_the_till() {
+        let park = opened_for(A_WHOLE_VISIT);
+        assert!(park.takings() > 0, "nobody bought anything all day");
+
+        let customers: u32 = park
+            .facilities()
+            .iter()
+            .filter_map(|(_, built)| built.as_ref())
+            .map(|shop| shop.customers())
+            .sum();
+        assert!(customers > 0, "the till took money from nobody");
+    }
+
+    #[test]
+    fn only_something_that_is_standing_there_can_be_priced() {
+        let mut park = Park::new("Prices", 32, 32, 1).unwrap();
+        let tile = TilePos::new(2, 2);
+        park.build(tile, Facility::FoodStall).unwrap();
+
+        assert_eq!(
+            park.raise_price(tile).unwrap(),
+            Facility::FoodStall.price() + Shop::PRICE_STEP
+        );
+        assert_eq!(park.lower_price(tile).unwrap(), Facility::FoodStall.price());
+        assert!(
+            park.raise_price(TilePos::new(3, 3)).is_err(),
+            "nothing there"
+        );
+        assert!(
+            park.set_price(TilePos::new(-1, -1), 5).is_err(),
+            "outside the park"
+        );
+    }
+
+    #[test]
+    fn a_demolished_shop_takes_its_till_with_it() {
+        let mut park = Park::new("Closing Down", 32, 32, 1).unwrap();
+        let tile = TilePos::new(2, 2);
+        park.build(tile, Facility::FoodStall).unwrap();
+        park.set_price(tile, 30).unwrap();
+
+        let bill = park.wage_bill();
+        let gone = park.demolish(tile).expect("something was there");
+
+        assert_eq!(gone.price(), 30, "the till went with it");
+        assert_eq!(park.shop_at(tile), None);
+        assert_eq!(
+            park.wage_bill(),
+            bill - gone.upkeep(),
+            "the park is still paying to run something it tore down"
+        );
+    }
+
+    #[test]
+    fn firing_somebody_takes_them_off_the_payroll() {
+        let mut park = Park::new("Payroll", 32, 32, 1).unwrap();
+        let id = park.hire(StaffKind::Handyman).unwrap();
+        let bill = park.wage_bill();
+
+        let gone = park.fire(id).expect("somebody was hired");
+        assert_eq!(gone.id(), id);
+        assert_eq!(park.wage_bill(), bill - StaffKind::Handyman.wage());
+        assert!(park.fire(id).is_none(), "fired twice");
+        assert!(park.staff().is_empty());
+    }
+
+    #[test]
+    fn somebody_can_be_let_go_by_the_tile_they_are_standing_on() {
+        let mut park = Park::new("Payroll", 32, 32, 1).unwrap();
+        park.hire(StaffKind::Entertainer).unwrap();
+        let at = park.staff()[0].tile();
+
+        assert!(park.fire_at(TilePos::new(-1, -1)).is_none());
+        assert!(park.fire_at(at).is_some());
+        assert!(park.staff().is_empty());
+    }
+
+    #[test]
+    fn a_handyman_puts_the_worn_ground_back() {
+        let mut park = Park::new("Tidy", 32, 32, 5).unwrap();
+        park.hire(StaffKind::Handyman).unwrap();
+        let at = park.staff()[0].tile();
+
+        // Worn ground right under their feet, so the round reaches it.
+        let worn: Vec<TilePos> = at
+            .neighbours()
+            .into_iter()
+            .filter(|tile| park.terrain().contains(*tile))
+            .collect();
+        for tile in &worn {
+            park.set_terrain(*tile, Terrain::Dirt);
+        }
+        let before = dirt(&park);
+        assert!(before >= worn.len(), "the dirt was not laid down");
+
+        let park = run(park, Park::TICKS_PER_TIDY * 2);
+        assert!(
+            dirt(&park) < before,
+            "the handyman left {} tiles of dirt alone",
+            dirt(&park)
+        );
+    }
+
+    /// How much of the park is worn down to bare earth.
+    fn dirt(park: &Park) -> usize {
+        park.terrain()
+            .iter()
+            .filter(|(_, ground)| **ground == Terrain::Dirt)
+            .count()
+    }
+
+    #[test]
+    fn an_entertainer_cheers_the_crowd_up() {
+        let plain = bare_park_opened_for(A_WHOLE_VISIT / 4);
+
+        let mut entertained = Park::new("Bare", 32, 32, 5).unwrap();
+        for tile in entertained.terrain().positions().collect::<Vec<_>>() {
+            entertained.demolish(tile);
+        }
+        entertained.hire(StaffKind::Entertainer).unwrap();
+        let entertained = run(entertained, A_WHOLE_VISIT / 4);
+
+        let (Some(with), Some(without)) =
+            (entertained.average_happiness(), plain.average_happiness())
+        else {
+            panic!("both parks should have somebody in them");
+        };
+        assert!(
+            with > without,
+            "an entertainer left the crowd at {with} against {without}"
+        );
+    }
+
+    #[test]
+    fn a_park_survives_a_save_with_its_staff_and_its_prices() {
+        let mut park = opened_for(2_000);
+        park.hire(StaffKind::Handyman).unwrap();
+        park.hire(StaffKind::Entertainer).unwrap();
+        let priced = park
+            .facilities()
+            .iter()
+            .find_map(|(tile, built)| built.map(|_| tile))
+            .expect("something is standing");
+        park.set_price(priced, 17).unwrap();
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded, park);
+        assert_eq!(loaded.shop_at(priced).map(Shop::price), Some(17));
+        assert_eq!(loaded.staff().len(), 2);
     }
 }

@@ -35,7 +35,11 @@ impl Facility {
         }
     }
 
-    /// What a guest pays to use it, which the park keeps.
+    /// The price one opens at, and the price guests think is fair.
+    ///
+    /// A [`crate::park::Shop`] may charge whatever its owner sets; this is what
+    /// it is compared against, both on the day it opens and in the mind of
+    /// every guest that walks past it.
     ///
     /// ```
     /// # use openpark::park::Facility;
@@ -46,6 +50,23 @@ impl Facility {
         match self {
             Self::FoodStall => 12,
             Self::Bench => 0,
+        }
+    }
+
+    /// What it costs the park to keep one open for one wage bill.
+    ///
+    /// Stock, cleaning and repairs. A bench costs almost nothing, which is why
+    /// a park can afford to line its paths with them; a stall has to sell
+    /// something to be worth having.
+    ///
+    /// ```
+    /// # use openpark::park::Facility;
+    /// assert!(Facility::FoodStall.upkeep() > Facility::Bench.upkeep());
+    /// ```
+    pub const fn upkeep(self) -> Money {
+        match self {
+            Self::FoodStall => 25,
+            Self::Bench => 2,
         }
     }
 
@@ -111,6 +132,25 @@ mod tests {
     fn a_stall_charges_and_a_bench_does_not() {
         assert!(Facility::FoodStall.price() > 0);
         assert_eq!(Facility::Bench.price(), 0);
+    }
+
+    #[test]
+    fn everything_costs_something_to_keep_open() {
+        for facility in Facility::ALL {
+            assert!(
+                facility.upkeep() > 0,
+                "{facility:?} costs the park nothing to run, so there is no reason to demolish one"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stall_at_the_fair_price_covers_its_own_upkeep() {
+        let stall = Facility::FoodStall;
+        assert!(
+            stall.price() * 3 > stall.upkeep(),
+            "three customers a wage bill should keep a stall in business"
+        );
     }
 
     #[test]

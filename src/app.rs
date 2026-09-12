@@ -210,7 +210,26 @@ impl OpenPark {
             },
             Tool::Demolish => Some(self.park.demolish(tile).map_or_else(
                 || "There is nothing there to demolish".to_owned(),
-                |facility| format!("Demolished a {}", facility.name().to_lowercase()),
+                |shop| format!("Demolished a {}", shop.kind().name().to_lowercase()),
+            )),
+            Tool::RaisePrice => Some(match self.park.raise_price(tile) {
+                Ok(price) => format!("The price is now {price}"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::LowerPrice => Some(match self.park.lower_price(tile) {
+                Ok(price) => format!("The price is now {price}"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Hire(kind) => Some(match self.park.hire(kind) {
+                Ok(_) => format!(
+                    "Hired a {}, waiting at the gate",
+                    kind.name().to_lowercase()
+                ),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Fire => Some(self.park.fire_at(tile).map_or_else(
+                || "There is nobody there to let go".to_owned(),
+                |staff| format!("Let the {} go", staff.kind().name().to_lowercase()),
             )),
         };
     }

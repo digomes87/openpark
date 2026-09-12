@@ -9,7 +9,7 @@ The game depends on the engine. The engine never depends on the game.
   the fixed-timestep clock, the seeded generator, A\* pathfinding, and the
   `Renderer` trait with its `macroquad` backend.
 - **openpark** owns everything true only of a park simulator: terrain, money,
-  rides, guests, scenery, saves.
+  guests, staff, rides, scenery, saves.
 
 The rule is easy to state and easy to break by accident. The test in review is
 simple: **can this type be explained without using the word "park"?** If yes, it
@@ -22,11 +22,23 @@ what `Terrain::Water` is; this crate implements it and supplies the costs.
 ```text
 src/
 ├── park/          the simulation
-│   ├── mod.rs         Park: the land, the money, the tick counter
-│   └── terrain.rs     Terrain: what the ground is and what it costs to cross
+│   ├── mod.rs         Park: the land, the money, the payroll, the tick
+│   ├── terrain.rs     Terrain: what the ground is and what it costs to cross
+│   ├── facility.rs    Facility: what a kind of stall or bench is like
+│   ├── shop.rs        Shop: one built facility, its price and its till
+│   ├── guest.rs       Guest: somebody visiting, and what they are doing about it
+│   ├── needs.rs       Needs: hunger, energy and mood, and nothing else
+│   ├── staff.rs       Staff: somebody on the payroll, and the job they do
+│   └── walk.rs        Walk: a route and a position, shared by both of them
 ├── view/          drawing, entirely through isogrid::render::Renderer
-│   └── mod.rs         the frame: sky, land, hover highlight, HUD
+│   ├── mod.rs         the frame: sky, land, hover highlight, HUD
+│   ├── facility.rs    what is built, and the label for the hovered tile
+│   ├── guest.rs       the crowd
+│   └── staff.rs       the payroll
 ├── app.rs         OpenPark: state, controls, and what a tick means
+├── tool.rs        Tool: what the mouse does when you click
+├── cli.rs         Options: the flags, parsed by hand
+├── screenshot.rs  the one deliberate reach past the Renderer trait
 ├── lib.rs         the library, so all of the above can be tested
 └── main.rs        the window, and nothing else
 ```
