@@ -7,7 +7,7 @@ use isogrid::iso::{ScreenPoint, TilePos, TileSize};
 use isogrid::render::Renderer;
 use isogrid::time::Tick;
 
-use crate::park::{Land, Park};
+use crate::park::{Heading, Land, Park, Ride, TrackPiece};
 use crate::tool::Tool;
 use crate::view::{self, Overlay};
 
@@ -44,6 +44,10 @@ pub struct OpenPark {
     /// How many frames have been drawn.
     frames: u32,
     quit: bool,
+    /// The ride the track tools are adding to, if one is being built.
+    building: Option<u32>,
+    /// Which way the next new ride's first piece will face.
+    heading: Heading,
 }
 
 impl OpenPark {
@@ -76,6 +80,8 @@ impl OpenPark {
             screenshot: None,
             frames: 0,
             quit: false,
+            building: None,
+            heading: Heading::East,
         })
     }
 
@@ -152,6 +158,34 @@ impl OpenPark {
             self.select(self.tool.next());
         }
 
+        // The number row picks a toolbar; 1 is the first, so the key is one
+        // ahead of the index.
+        for number in 1..=Tool::KITS.len() {
+            #[allow(clippy::cast_possible_truncation)]
+            let key = Key::digit(number as u8);
+            if key.is_some_and(|key| input.key_pressed(key)) {
+                if let Some(tool) = Tool::from_kit(number - 1) {
+                    self.select(tool);
+                }
+            }
+        }
+
+        // A tool that wants a heading takes the arrow keys off the camera while
+        // it is in hand: pointing a new ride somewhere is what they are for at
+        // that moment, and dragging still pans.
+        if self.tool.wants_a_heading() {
+            for (key, heading) in [
+                (Key::Up, Heading::North),
+                (Key::Right, Heading::East),
+                (Key::Down, Heading::South),
+                (Key::Left, Heading::West),
+            ] {
+                if input.key_pressed(key) {
+                    self.heading = heading;
+                }
+            }
+        }
+
         // Dragging with either the middle or the right button pans, which is
         // what every isometric game has trained people to expect.
         if input.button_down(Button::Middle) || input.button_down(Button::Right) {
@@ -159,17 +193,21 @@ impl OpenPark {
         }
 
         let mut pan = ScreenPoint::ZERO;
-        if input.key_down(Key::Up) {
+        if self.tool.wants_a_heading() {
+            // Arrows are steering, not scrolling.
+        } else if input.key_down(Key::Up) {
             pan = ScreenPoint::new(pan.x - KEYBOARD_PAN_SPEED, pan.y - KEYBOARD_PAN_SPEED);
         }
-        if input.key_down(Key::Down) {
-            pan = ScreenPoint::new(pan.x + KEYBOARD_PAN_SPEED, pan.y + KEYBOARD_PAN_SPEED);
-        }
-        if input.key_down(Key::Left) {
-            pan = ScreenPoint::new(pan.x - KEYBOARD_PAN_SPEED, pan.y + KEYBOARD_PAN_SPEED);
-        }
-        if input.key_down(Key::Right) {
-            pan = ScreenPoint::new(pan.x + KEYBOARD_PAN_SPEED, pan.y - KEYBOARD_PAN_SPEED);
+        if !self.tool.wants_a_heading() {
+            if input.key_down(Key::Down) {
+                pan = ScreenPoint::new(pan.x + KEYBOARD_PAN_SPEED, pan.y + KEYBOARD_PAN_SPEED);
+            }
+            if input.key_down(Key::Left) {
+                pan = ScreenPoint::new(pan.x - KEYBOARD_PAN_SPEED, pan.y + KEYBOARD_PAN_SPEED);
+            }
+            if input.key_down(Key::Right) {
+                pan = ScreenPoint::new(pan.x + KEYBOARD_PAN_SPEED, pan.y - KEYBOARD_PAN_SPEED);
+            }
         }
         self.camera.pan(pan.x, pan.y);
 
@@ -229,11 +267,11 @@ impl OpenPark {
                 || "There is nothing there to demolish".to_owned(),
                 |shop| format!("Demolished a {}", shop.kind().name().to_lowercase()),
             )),
-            Tool::RaisePrice => Some(match self.park.raise_price(tile) {
+            Tool::RaisePrice => Some(match self.park.raise_the_price_at(tile) {
                 Ok(price) => format!("The price is now {price}"),
                 Err(refused) => refused.to_string(),
             }),
-            Tool::LowerPrice => Some(match self.park.lower_price(tile) {
+            Tool::LowerPrice => Some(match self.park.lower_the_price_at(tile) {
                 Ok(price) => format!("The price is now {price}"),
                 Err(refused) => refused.to_string(),
             }),
@@ -260,7 +298,119 @@ impl OpenPark {
                 Ok(()) => format!("Laid {}", terrain.name().to_lowercase()),
                 Err(refused) => refused.to_string(),
             }),
+            Tool::StartRide => Some(self.start_a_ride(tile)),
+            Tool::Track(piece) => Some(self.lay_track(piece)),
+            Tool::Unlay => Some(self.unlay_track()),
+            Tool::TestRide => Some(self.test_the_ride(tile)),
+            Tool::OpenRide => Some(self.open_the_ride(tile)),
+            Tool::CloseRide => Some(self.close_the_ride(tile)),
+            Tool::DemolishRide => Some(self.demolish_the_ride(tile)),
         };
+    }
+}
+
+impl OpenPark {
+    /// Starts a new ride at `tile`, and holds on to it for the track tools.
+    fn start_a_ride(&mut self, tile: TilePos) -> String {
+        let name = format!("Ride {}", self.park.rides().len() + 1);
+        match self.park.start_a_ride(name.clone(), tile, self.heading) {
+            Ok(id) => {
+                self.building = Some(id);
+                format!("Started {name}, facing {:?}", self.heading)
+            }
+            Err(refused) => refused.to_string(),
+        }
+    }
+
+    /// Lays one more piece on the ride being built.
+    fn lay_track(&mut self, piece: TrackPiece) -> String {
+        let Some(id) = self.building else {
+            return "Start a ride before laying track on it".to_owned();
+        };
+
+        match self.park.lay_track(id, piece) {
+            Ok(laid) => format!(
+                "Laid {} at {}, {}",
+                laid.piece.name().to_lowercase(),
+                laid.tile.x,
+                laid.tile.y
+            ),
+            Err(refused) => refused.to_string(),
+        }
+    }
+
+    /// Takes the last piece back off the ride being built.
+    fn unlay_track(&mut self) -> String {
+        let Some(id) = self.building else {
+            return "No ride is being built".to_owned();
+        };
+
+        self.park.unlay_track(id).map_or_else(
+            || "There is no track left to take off".to_owned(),
+            |piece| format!("Took off the {}", piece.name().to_lowercase()),
+        )
+    }
+
+    /// The id of whichever ride has track under `tile`.
+    fn ride_under(&self, tile: TilePos) -> Option<u32> {
+        self.park.ride_at(tile).map(Ride::id)
+    }
+
+    /// Sends a test train round the ride under the pointer.
+    fn test_the_ride(&mut self, tile: TilePos) -> String {
+        let Some(id) = self.ride_under(tile) else {
+            return "There is no ride there to test".to_owned();
+        };
+
+        match self.park.test_ride(id) {
+            Ok(stats) => format!(
+                "Excitement {:.0}%, intensity {:.0}%, a lap in {} ticks",
+                stats.excitement * 100.0,
+                stats.intensity * 100.0,
+                stats.lap
+            ),
+            Err(refused) => refused.to_string(),
+        }
+    }
+
+    /// Opens the ride under the pointer.
+    fn open_the_ride(&mut self, tile: TilePos) -> String {
+        let Some(id) = self.ride_under(tile) else {
+            return "There is no ride there to open".to_owned();
+        };
+
+        match self.park.open_ride(id) {
+            Ok(()) => "Open to the queue".to_owned(),
+            Err(refused) => refused.to_string(),
+        }
+    }
+
+    /// Shuts the ride under the pointer.
+    fn close_the_ride(&mut self, tile: TilePos) -> String {
+        let Some(id) = self.ride_under(tile) else {
+            return "There is no ride there to shut".to_owned();
+        };
+
+        match self.park.close_ride(id) {
+            Ok(()) => "Shut".to_owned(),
+            Err(refused) => refused.to_string(),
+        }
+    }
+
+    /// Takes the whole ride under the pointer down.
+    fn demolish_the_ride(&mut self, tile: TilePos) -> String {
+        let Some(id) = self.ride_under(tile) else {
+            return "There is no ride there to demolish".to_owned();
+        };
+
+        if self.building == Some(id) {
+            self.building = None;
+        }
+
+        self.park.demolish_ride(id).map_or_else(
+            || "There is no ride there to demolish".to_owned(),
+            |ride| format!("Demolished {}", ride.name()),
+        )
     }
 }
 
@@ -445,16 +595,65 @@ mod tests {
     }
 
     #[test]
-    fn space_walks_through_the_tools() {
+    fn space_walks_along_the_toolbar_in_hand() {
         let mut game = game();
-        assert_eq!(game.tool(), Tool::Inspect);
+        game.select(Tool::Build(Facility::FoodStall));
+        let kit = Tool::KITS[game.tool().kit()];
 
-        for expected in Tool::ORDER.iter().skip(1).chain(Some(&Tool::Inspect)) {
+        for expected in kit.iter().skip(1).chain(kit.first()) {
             frame(&mut game, ScreenPoint::ZERO, |input| {
                 input.press_key(Key::Space);
             });
             assert_eq!(game.tool(), *expected);
         }
+    }
+
+    #[test]
+    fn the_number_row_picks_a_toolbar() {
+        let mut game = game();
+
+        for number in 1..=Tool::KITS.len() {
+            #[allow(clippy::cast_possible_truncation)]
+            let key = Key::digit(number as u8).expect("there are fewer than ten toolbars");
+            frame(&mut game, ScreenPoint::ZERO, |input| {
+                input.press_key(key);
+            });
+
+            assert_eq!(
+                game.tool(),
+                Tool::from_kit(number - 1).expect("every toolbar has a tool"),
+                "key {number} picked the wrong toolbar"
+            );
+        }
+    }
+
+    #[test]
+    fn the_arrow_keys_steer_a_new_ride_instead_of_scrolling() {
+        let mut game = game();
+        game.select(Tool::StartRide);
+        let looking_at = game.camera().focus();
+
+        frame(&mut game, ScreenPoint::ZERO, |input| {
+            input.press_key(Key::Up);
+            input.release_key(Key::Up);
+        });
+
+        assert_eq!(
+            game.camera().focus(),
+            looking_at,
+            "the view scrolled while a ride was being pointed somewhere"
+        );
+
+        // And with an ordinary tool in hand they scroll again.
+        game.select(Tool::Inspect);
+        frame(&mut game, ScreenPoint::ZERO, |input| {
+            input.press_key(Key::Down);
+        });
+        assert_ne!(
+            game.camera().focus(),
+            looking_at,
+            "the view stopped scrolling"
+        );
     }
 
     /// Clicks on one tile, wherever it happens to be on screen.

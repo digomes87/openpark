@@ -6,6 +6,7 @@
 mod facility;
 mod guest;
 mod land;
+mod ride;
 mod staff;
 
 use isogrid::camera::Camera;
@@ -58,6 +59,7 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     canvas.clear(SKY);
     land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
+    ride::draw_rides(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
     staff::draw_staff(canvas, park, camera);
 
@@ -87,7 +89,10 @@ fn draw_highlight(
 /// The colour the hovered tile is filled with, given what the pointer holds.
 fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
     let allowed = match tool {
-        Tool::Inspect => return HIGHLIGHT,
+        // Looking at something changes nothing, and track goes where the
+        // layout says rather than where the pointer is — neither has a yes or
+        // a no to show.
+        Tool::Inspect | Tool::Track(_) | Tool::Unlay => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
         Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
         // Hiring happens at the gate, so every tile is as good as any other;
@@ -96,6 +101,10 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         Tool::Fire => park.staff().iter().any(|member| member.tile() == tile),
         Tool::Raise | Tool::Lower => park.can_reshape(tile),
         Tool::Lay(terrain) => park.can_lay(tile, terrain),
+        Tool::StartRide => park.can_start_a_ride(tile),
+        Tool::TestRide | Tool::OpenRide | Tool::CloseRide | Tool::DemolishRide => {
+            park.ride_at(tile).is_some()
+        }
     };
 
     if allowed {
@@ -131,6 +140,11 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         format!("Takings: {}", park.takings()),
         format!("Guests: {}", park.guests().len()),
         format!("Staff: {}", park.staff().len()),
+        format!(
+            "Rides: {} ({} open)",
+            park.rides().len(),
+            park.rides().iter().filter(|ride| ride.is_open()).count()
+        ),
         park.average_happiness().map_or_else(
             || "Happiness: —".to_owned(),
             |happiness| format!("Happiness: {:.0}%", happiness * 100.0),

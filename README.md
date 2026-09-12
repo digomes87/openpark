@@ -41,6 +41,12 @@ The crowd wears its own shortcuts into the grass, and a handyman walks them back
 to lawn — slower than a busy park ruins them, which is what makes hiring a second
 one a decision.
 
+The land has a shape. A new park is rolling rather than flat, and you can raise
+it, dig it out and pave it yourself. A step up costs a guest four times what flat
+ground does, so a crowd goes round a hill it could have climbed; two steps is a
+cliff nobody walks off at all, which is either a mistake or a wall, depending on
+whether you meant it.
+
 ![A food stall close up, with guests queuing beside it and a bench along the
 path](docs/images/stall.png)
 
@@ -72,7 +78,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `Space` | Cycle the tool: look, build, demolish, price up, price down, hire, fire |
+| `Space` | Cycle the tool: look, build, demolish, price, hire, fire, raise, dig, lay |
 | Left click | Use the tool on the tile under the pointer |
 | `Esc` | Put the tool down, or quit when empty-handed |
 
@@ -118,8 +124,8 @@ code — be tested without opening a window.
 - [x] Food stalls and benches, and guests who spend money at them
 - [x] Building and demolishing them yourself, with the mouse
 - [x] Shops, prices, staff and a park that can go bankrupt
+- [x] Terrain editing
 - [ ] The track builder and ride physics
-- [ ] Terrain editing
 - [ ] Save and load
 
 ## Development

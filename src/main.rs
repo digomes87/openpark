@@ -43,6 +43,12 @@ async fn main() -> Result<()> {
     let mut park = Park::new("Forest Frontiers", PARK_SIZE, PARK_SIZE, options.seed)
         .context("failed to lay out the starting park")?;
 
+    // Laid before the clock runs, so a fast-forward has something to queue for.
+    if options.coaster {
+        let id = openpark::demo::coaster(&mut park).context("failed to lay the demo coaster")?;
+        tracing::info!(ride = id, "laid the demo coaster");
+    }
+
     // Fast-forward before the window opens rather than waiting out the ticks at
     // playing speed: a screenshot of a park half an hour into its day should
     // not take half an hour to produce.

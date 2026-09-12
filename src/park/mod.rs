@@ -4,18 +4,22 @@ mod facility;
 mod guest;
 mod land;
 mod needs;
+mod ride;
 mod shop;
 mod staff;
 mod terrain;
+mod track;
 mod walk;
 
 pub use facility::Facility;
 pub use guest::{Guest, Plan};
 pub use land::Land;
 pub use needs::Needs;
+pub use ride::{Ride, RideState, RideStats, TestFailure, Train};
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
+pub use track::{Heading, Segment, Track, TrackPiece};
 pub use walk::Walk;
 
 use core::num::NonZeroU32;
@@ -45,6 +49,7 @@ pub struct Park {
     facilities: Grid<Option<Shop>>,
     guests: Vec<Guest>,
     staff: Vec<Staff>,
+    rides: Vec<Ride>,
     cash: Money,
     rng: Rng,
     tick: Tick,
@@ -55,6 +60,8 @@ pub struct Park {
     guests_who_left: u32,
     /// The id the next member of staff hired will get.
     next_staff_id: u32,
+    /// The id the next ride built will get.
+    next_ride_id: u32,
     /// When the park ran out of credit, if it has.
     bankrupt_since: Option<Tick>,
 }
@@ -83,6 +90,12 @@ impl Park {
 
     /// What it costs to move one tile of land by one step.
     pub const LANDSCAPING: Money = 20;
+
+    /// How many rides one park can hold.
+    ///
+    /// Every train's tick resolves its whole layout, so the cost of a park is
+    /// bounded by this times [`Track::MAX_PIECES`].
+    pub const MAX_RIDES: usize = 32;
 
     /// How many ticks pass between arrivals.
     ///
@@ -124,8 +137,15 @@ impl Park {
     /// How much mood a guest gains per tick of walking near an entertainer.
     const ENTERTAINED: f32 = 1.0 / 1_500.0;
 
-    /// How many ticks a handyman takes to put one tile of dirt back to grass.
+    /// How many ticks a handyman takes to put one tile of dirt back to grass,
+    /// and a mechanic to put one broken ride back together.
     const TICKS_PER_TIDY: u64 = 200;
+
+    /// How likely a completely worn-out ride is to break down, per tick.
+    ///
+    /// Scaled by how worn the ride actually is, so a new one is as good as
+    /// reliable and an old one fails every few thousand ticks.
+    const BREAKDOWN_CHANCE: f32 = 0.0002;
 
     /// How many of those attempts insist on a goal that is actually a path.
     ///
@@ -189,16 +209,18 @@ impl Park {
 
         let mut park = Self {
             name: name.into(),
-            land: Land::flat(terrain)?,
+            land: Land::rolling(terrain, &mut rng)?,
             facilities,
             guests: Vec::new(),
             staff: Vec::new(),
+            rides: Vec::new(),
             cash: Self::STARTING_CASH,
             rng,
             tick: Tick::ZERO,
             next_guest_id: 0,
             guests_who_left: 0,
             next_staff_id: 0,
+            next_ride_id: 0,
             bankrupt_since: None,
         };
 
@@ -283,6 +305,41 @@ impl Park {
     /// ```
     pub fn set_price(&mut self, tile: TilePos, price: Money) -> Result<Money> {
         self.repricing(tile, |shop| shop.set_price(price))
+    }
+
+    /// Puts the price up by one step on whatever is on `tile` — a shop, or the
+    /// ride whose track runs across it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is nothing on that tile to put a price on.
+    pub fn raise_the_price_at(&mut self, tile: TilePos) -> Result<Money> {
+        if let Some(at) = self
+            .rides
+            .iter()
+            .position(|ride| ride.track().occupies(tile))
+        {
+            return Ok(self.rides[at].raise_price());
+        }
+
+        self.raise_price(tile)
+    }
+
+    /// Brings it down by one step, on a shop or a ride alike.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is nothing on that tile to put a price on.
+    pub fn lower_the_price_at(&mut self, tile: TilePos) -> Result<Money> {
+        if let Some(at) = self
+            .rides
+            .iter()
+            .position(|ride| ride.track().occupies(tile))
+        {
+            return Ok(self.rides[at].lower_price());
+        }
+
+        self.lower_price(tile)
     }
 
     /// Puts the price on `tile` up by one step.
@@ -386,6 +443,10 @@ impl Park {
         anyhow::ensure!(
             self.facility_at(tile).is_none(),
             "there is already something on {tile:?}",
+        );
+        anyhow::ensure!(
+            self.ride_at(tile).is_none(),
+            "there is track across {tile:?}",
         );
 
         Ok(())
@@ -575,16 +636,22 @@ impl Park {
             .map(|shop| shop.upkeep())
             .sum();
 
-        wages.saturating_add(upkeep)
+        let rides: Money = self.rides.iter().map(Ride::upkeep).sum();
+
+        wages.saturating_add(upkeep).saturating_add(rides)
     }
 
-    /// Everything every till has taken since the park opened.
+    /// Everything every till has taken since the park opened, rides included.
     pub fn takings(&self) -> Money {
-        self.facilities
+        let shops: Money = self
+            .facilities
             .iter()
             .filter_map(|(_, built)| built.as_ref())
             .map(|shop| shop.takings())
-            .sum()
+            .sum();
+        let rides: Money = self.rides.iter().map(Ride::takings).sum();
+
+        shops.saturating_add(rides)
     }
 
     /// Whether the bank has closed the park.
@@ -609,6 +676,221 @@ impl Park {
     /// charges.
     pub fn set_terrain(&mut self, tile: TilePos, terrain: Terrain) -> Option<Terrain> {
         self.land.set_ground(tile, terrain)
+    }
+
+    /// Every ride in the park.
+    pub fn rides(&self) -> &[Ride] {
+        &self.rides
+    }
+
+    /// One ride by its id.
+    pub fn ride(&self, id: u32) -> Option<&Ride> {
+        self.rides.iter().find(|ride| ride.id() == id)
+    }
+
+    /// Whichever ride has track on `tile`, if any has.
+    pub fn ride_at(&self, tile: TilePos) -> Option<&Ride> {
+        self.rides.iter().find(|ride| ride.track().occupies(tile))
+    }
+
+    /// Starts a new ride, with its first piece to be laid on `tile`.
+    ///
+    /// Nothing is charged yet: a ride with no track on it costs nothing, which
+    /// is what makes putting one down and thinking about it free.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the park is bankrupt, already has [`Park::MAX_RIDES`], or the
+    /// tile will not take track.
+    pub fn start_a_ride(
+        &mut self,
+        name: impl Into<String>,
+        tile: TilePos,
+        heading: Heading,
+    ) -> Result<u32> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot build anything",
+        );
+        anyhow::ensure!(
+            self.rides.len() < Self::MAX_RIDES,
+            "a park cannot hold more than {} rides",
+            Self::MAX_RIDES,
+        );
+
+        let ground = self
+            .land
+            .height_at(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?;
+        self.check_track_tile(tile, None)?;
+
+        let id = self.next_ride_id;
+        self.next_ride_id = self.next_ride_id.wrapping_add(1);
+        self.rides.push(Ride::new(
+            id,
+            name,
+            Track::starting_at(tile, heading, ground),
+        ));
+
+        Ok(id)
+    }
+
+    /// Whether [`Park::start_a_ride`] would be allowed here, for a cursor that
+    /// wants to say so before the click.
+    pub fn can_start_a_ride(&self, tile: TilePos) -> bool {
+        !self.is_bankrupt()
+            && self.rides.len() < Self::MAX_RIDES
+            && self.check_track_tile(tile, None).is_ok()
+    }
+
+    /// Lays one more piece on a ride, and charges for it.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no such ride, the park cannot pay, or the piece will
+    /// not go where the layout wants to put it — outside the park, on another
+    /// ride, on something built, or underground.
+    pub fn lay_track(&mut self, id: u32, piece: TrackPiece) -> Result<Segment> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot build anything",
+        );
+        anyhow::ensure!(
+            self.cash >= piece.cost(),
+            "a {} costs {} and the park has {}",
+            piece.name().to_lowercase(),
+            piece.cost(),
+            self.cash,
+        );
+
+        let at = self.index_of_ride(id)?;
+        let (tile, _, entry) = self.rides[at].track().next_place();
+        let exit = entry + piece.climb();
+
+        self.check_track_tile(tile, Some(id))?;
+        let ground = self
+            .land
+            .height_at(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?;
+        anyhow::ensure!(
+            entry.min(exit) >= ground,
+            "track cannot run underground: {tile:?} stands {ground} steps up",
+        );
+        if piece == TrackPiece::Station {
+            anyhow::ensure!(
+                entry == ground,
+                "a station has to be at ground level for anybody to reach it",
+            );
+        }
+
+        let laid = self.rides[at].track_mut().push(piece)?;
+        self.adjust_cash(-piece.cost());
+        Ok(laid)
+    }
+
+    /// Takes the last piece of a ride's track back off. Nothing comes back for
+    /// it.
+    pub fn unlay_track(&mut self, id: u32) -> Option<TrackPiece> {
+        let at = self.index_of_ride(id).ok()?;
+        self.rides[at].track_mut().pop()
+    }
+
+    /// Sends a test train round a ride's layout.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no such ride, or if the layout will not do — see
+    /// [`Ride::test`].
+    pub fn test_ride(&mut self, id: u32) -> Result<RideStats> {
+        let at = self.index_of_ride(id)?;
+        let stats = self.rides[at].test()?;
+        Ok(stats)
+    }
+
+    /// Opens a ride to the queue.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no such ride, or it cannot open — see [`Ride::open`].
+    pub fn open_ride(&mut self, id: u32) -> Result<()> {
+        let at = self.index_of_ride(id)?;
+        self.rides[at].open()
+    }
+
+    /// Shuts a ride without taking it down.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no such ride.
+    pub fn close_ride(&mut self, id: u32) -> Result<()> {
+        let at = self.index_of_ride(id)?;
+        self.rides[at].close();
+        Ok(())
+    }
+
+    /// Changes what a ride charges, returning the price on the board.
+    ///
+    /// # Errors
+    ///
+    /// Fails if there is no such ride.
+    pub fn set_ride_price(&mut self, id: u32, price: Money) -> Result<Money> {
+        let at = self.index_of_ride(id)?;
+        Ok(self.rides[at].set_price(price))
+    }
+
+    /// Takes a whole ride down, returning what was there.
+    ///
+    /// Everybody aboard is put back on their feet at the station: a demolished
+    /// ride should empty out, not take its riders with it.
+    pub fn demolish_ride(&mut self, id: u32) -> Option<Ride> {
+        let at = self.index_of_ride(id).ok()?;
+        let gone = self.rides.remove(at);
+
+        for guest in &mut self.guests {
+            if guest.riding() == Some(id) {
+                guest.get_off();
+            }
+        }
+
+        Some(gone)
+    }
+
+    /// Where a ride is in the list, by id.
+    fn index_of_ride(&self, id: u32) -> Result<usize> {
+        self.rides
+            .iter()
+            .position(|ride| ride.id() == id)
+            .with_context(|| format!("there is no ride {id}"))
+    }
+
+    /// Why a tile will not take a piece of track.
+    ///
+    /// `mine` is the ride doing the asking, whose own track is allowed to be
+    /// there — [`Track::push`] has its own opinion about crossing itself.
+    fn check_track_tile(&self, tile: TilePos, mine: Option<u32>) -> Result<()> {
+        anyhow::ensure!(self.land.contains(tile), "{tile:?} is outside the park");
+        anyhow::ensure!(
+            self.facility_at(tile).is_none(),
+            "there is something built on {tile:?}",
+        );
+        anyhow::ensure!(
+            self.land.ground(tile).is_some_and(Terrain::is_buildable)
+                || self.land.ground(tile) == Some(Terrain::Path),
+            "track cannot be built on {:?}",
+            self.land.ground(tile),
+        );
+
+        let somebody_elses = self
+            .rides
+            .iter()
+            .find(|ride| Some(ride.id()) != mine && ride.track().occupies(tile));
+        anyhow::ensure!(
+            somebody_elses.is_none(),
+            "{tile:?} already has {} running across it",
+            somebody_elses.map_or("another ride", Ride::name),
+        );
+
+        Ok(())
     }
 
     /// Raises the tile under the pointer by a step, and charges for it.
@@ -719,6 +1001,10 @@ impl Park {
             !self.is_anybody_on(tile),
             "somebody is standing on {tile:?}",
         );
+        anyhow::ensure!(
+            self.ride_at(tile).is_none(),
+            "there is track across {tile:?}",
+        );
 
         Ok(())
     }
@@ -758,6 +1044,9 @@ impl Park {
         }
 
         self.walk_the_guests();
+        self.load_the_trains();
+        self.run_the_rides();
+        self.wear_and_tear();
         self.walk_the_staff();
         self.do_the_rounds();
 
@@ -767,6 +1056,99 @@ impl Park {
         }
 
         self.show_out_the_guests();
+    }
+
+    /// Puts whoever is waiting beside a station onto the train that is loading.
+    ///
+    /// A guest pays as it boards and the park keeps the fare, which is why the
+    /// ride's till and the bank move together.
+    fn load_the_trains(&mut self) {
+        let mut fares = 0;
+
+        for index in 0..self.guests.len() {
+            let Plan::Queueing { ride, station } = self.guests[index].plan() else {
+                continue;
+            };
+
+            // Still walking there, or the queue moved and it is not beside the
+            // station yet.
+            if !self.guests[index].tile().neighbours().contains(&station) {
+                continue;
+            }
+
+            let Ok(at) = self.index_of_ride(ride) else {
+                // The ride was taken down while somebody was walking to it.
+                self.guests[index].decide(Plan::Wandering);
+                continue;
+            };
+
+            if self.rides[at].boarding().is_none() {
+                // Shut, broken, or the train is out on the circuit: wait.
+                if !self.rides[at].is_open() {
+                    self.guests[index].decide(Plan::Wandering);
+                }
+                continue;
+            }
+
+            let price = self.rides[at].price();
+            if !self.guests[index].can_afford(price) {
+                self.guests[index].decide(Plan::Wandering);
+                continue;
+            }
+
+            if let Some(fare) = self.rides[at].board_one() {
+                fares += self.guests[index].pay(fare);
+                self.guests[index].decide_anyway(Plan::Riding { ride });
+            }
+        }
+
+        self.adjust_cash(fares);
+    }
+
+    /// Runs every ride for a tick, and puts whoever got off back on their feet.
+    fn run_the_rides(&mut self) {
+        for at in 0..self.rides.len() {
+            let got_off = self.rides[at].tick();
+            if got_off == 0 {
+                continue;
+            }
+
+            let id = self.rides[at].id();
+            let (excitement, intensity) = self.rides[at]
+                .stats()
+                .map_or((0.0, 0.0), |stats| (stats.excitement, stats.intensity));
+
+            let mut left = got_off;
+            for guest in &mut self.guests {
+                if left == 0 {
+                    break;
+                }
+                if guest.riding() == Some(id) {
+                    guest.enjoy_a_ride(excitement, intensity);
+                    guest.get_off();
+                    left -= 1;
+                }
+            }
+        }
+    }
+
+    /// Gives every running ride its chance to break down.
+    ///
+    /// The chance rises with how worn the ride is, so a new one almost never
+    /// fails and an old one that nobody has repaired fails often. A broken ride
+    /// waits for a mechanic, and a park with none never runs again.
+    fn wear_and_tear(&mut self) {
+        for at in 0..self.rides.len() {
+            if !self.rides[at].is_open() {
+                continue;
+            }
+
+            let wear = self.rides[at].wear();
+            if wear > 0.0 && self.rng.chance(wear * Self::BREAKDOWN_CHANCE) {
+                self.rides[at].break_down();
+                tracing::info!(ride = %self.rides[at].name(), wear, "a ride broke down");
+            }
+        }
     }
 
     /// Pays every wage and every bit of upkeep, once a wage bill is due.
@@ -864,7 +1246,38 @@ impl Park {
                         self.tidy_up_around(at, kind.reach());
                     }
                 }
+                StaffKind::Mechanic => {
+                    if tidying {
+                        self.fix_something_around(at, kind.reach());
+                    }
+                }
             }
+        }
+    }
+
+    /// Puts one broken ride within `reach` of `at` back into service.
+    ///
+    /// The nearest one by its track rather than by its station: a mechanic
+    /// walking past the back of a ride can still get at the mechanism.
+    fn fix_something_around(&mut self, at: TilePos, reach: u32) {
+        let broken = self.rides.iter().position(|ride| {
+            ride.state() == RideState::Broken
+                && ride
+                    .track()
+                    .tiles()
+                    .iter()
+                    .any(|tile| at.manhattan_distance(*tile) <= reach)
+        });
+
+        let Some(index) = broken else {
+            return;
+        };
+
+        self.rides[index].repair();
+        let name = self.rides[index].name().to_owned();
+        match self.rides[index].open() {
+            Ok(()) => tracing::info!(ride = %name, "a mechanic put a ride back into service"),
+            Err(error) => tracing::warn!(%error, ride = %name, "a repaired ride would not open"),
         }
     }
 
@@ -928,6 +1341,7 @@ impl Park {
                 land,
                 facilities,
                 guests,
+                rides,
                 rng,
                 ..
             } = self;
@@ -943,6 +1357,12 @@ impl Park {
 
             for guest in guests.iter_mut() {
                 guest.live();
+
+                // Aboard something: not on the map until the ride brings it
+                // back, so it neither walks nor wears the grass out.
+                if guest.riding().is_some() {
+                    continue;
+                }
 
                 // A park the bank has closed cannot talk anybody into staying.
                 if closed {
@@ -1003,7 +1423,7 @@ impl Park {
                     }
                 }
 
-                let route = match Self::what_next(guest, &map, rng, &mut finder, entrance) {
+                let route = match Self::what_next(guest, &map, rng, &mut finder, entrance, rides) {
                     Some((plan, route)) => {
                         guest.decide(plan);
                         Some(route)
@@ -1049,6 +1469,7 @@ impl Park {
         rng: &mut Rng,
         finder: &mut PathFinder,
         entrance: TilePos,
+        rides: &[Ride],
     ) -> Option<(Plan, Vec<TilePos>)> {
         let from = guest.tile();
 
@@ -1059,10 +1480,19 @@ impl Park {
             ));
         }
 
-        if let Some(wanted) = Self::what_it_wants(guest) {
-            if let Some((facility, route)) = nearest_facility(map, finder, from, wanted, guest) {
-                return Some((Plan::Visiting { facility }, route));
+        match Self::what_it_wants(guest) {
+            Some(Wanted::Ride) => {
+                if let Some((ride, station, route)) = nearest_ride(map, finder, from, rides, guest)
+                {
+                    return Some((Plan::Queueing { ride, station }, route));
+                }
             }
+            Some(Wanted::Something(kind)) => {
+                if let Some((facility, route)) = nearest_facility(map, finder, from, kind, guest) {
+                    return Some((Plan::Visiting { facility }, route));
+                }
+            }
+            None => {}
         }
 
         Some((Plan::Wandering, wander(map, rng, finder, from)?))
@@ -1073,12 +1503,17 @@ impl Park {
     /// Hunger first: it is the need that ends a visit. What the guest can
     /// afford, and what it thinks is a fair price, is settled per shop by
     /// [`nearest_facility`] — two stalls in one park need not agree on either.
-    fn what_it_wants(guest: &Guest) -> Option<Facility> {
+    fn what_it_wants(guest: &Guest) -> Option<Wanted> {
+        // Something to do comes first — it is what the guest came for — but a
+        // guest that is starving or footsore sorts that out before queueing.
         if guest.needs().wants_food() {
-            return Some(Facility::FoodStall);
+            return Some(Wanted::Something(Facility::FoodStall));
         }
         if guest.needs().wants_a_sit_down() {
-            return Some(Facility::Bench);
+            return Some(Wanted::Something(Facility::Bench));
+        }
+        if guest.needs().wants_a_ride() {
+            return Some(Wanted::Ride);
         }
         None
     }
@@ -1145,6 +1580,52 @@ fn wears_from_here(land: &Land, tile: TilePos) -> bool {
     tile.neighbours()
         .iter()
         .any(|beside| matches!(land.ground(*beside), Some(Terrain::Path | Terrain::Dirt)))
+}
+
+/// What a guest would go out of its way for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wanted {
+    /// A go on something.
+    Ride,
+    /// A stall or a bench.
+    Something(Facility),
+}
+
+/// Finds the nearest ride a guest at `from` can get to, get on, and afford.
+///
+/// Returns the ride, the station tile to board from, and the route to the tile
+/// beside it. Only the [`Park::FACILITY_ATTEMPTS`] nearest are tried, for the
+/// same reason as stalls: past that the walk is long enough that the guest may
+/// as well wander and look again.
+fn nearest_ride(
+    map: &ParkMap<'_>,
+    finder: &mut PathFinder,
+    from: TilePos,
+    rides: &[Ride],
+    guest: &Guest,
+) -> Option<(u32, TilePos, Vec<TilePos>)> {
+    let mut candidates: Vec<(u32, u32, TilePos)> = rides
+        .iter()
+        .filter(|ride| ride.is_open() && guest.will_ride(ride))
+        .flat_map(|ride| {
+            ride.track()
+                .stations()
+                .into_iter()
+                .map(move |station| (from.manhattan_distance(station), ride.id(), station))
+        })
+        .collect();
+    candidates.sort_unstable();
+
+    for (_, ride, station) in candidates.into_iter().take(Park::FACILITY_ATTEMPTS) {
+        // Guests board from the tile beside the station, never off the track.
+        for beside in station.neighbours() {
+            if let Some(route) = finder.find(map, from, beside) {
+                return Some((ride, station, route.tiles().to_vec()));
+            }
+        }
+    }
+
+    None
 }
 
 /// Finds the nearest facility of a kind that a guest at `from` can actually
@@ -1496,15 +1977,15 @@ mod tests {
     }
 
     #[test]
-    fn a_park_with_stalls_and_benches_keeps_its_guests() {
+    fn a_park_with_stalls_and_benches_keeps_its_guests_happier() {
         let fed = opened_for(A_WHOLE_VISIT);
         let starved = bare_park_opened_for(A_WHOLE_VISIT);
 
-        assert!(
-            fed.guests_who_left() < starved.guests_who_left(),
-            "feeding the guests made no difference: {} left either way",
-            fed.guests_who_left()
-        );
+        // Not a count of who left: with nothing to ride, everybody eventually
+        // gets bored and goes home from either park, and boredom swamps the
+        // difference. What a stall buys a park is a happier crowd while they
+        // are in it. A ride is what buys their time, and that is asserted of a
+        // park that has one.
         assert!(
             fed.average_happiness() > starved.average_happiness(),
             "the crowd was no happier for being fed"
@@ -2030,15 +2511,65 @@ mod tests {
     }
 
     #[test]
-    fn a_gentle_ramp_is_still_walked_on() {
+    fn a_single_step_is_a_ramp_and_two_is_a_wall() {
         let mut park = Park::new("Ramped", 32, 32, 5).unwrap();
         let ramp = TilePos::new(16, 16);
-        park.raise(ramp).unwrap();
+        let below = TilePos::new(16, 15);
+        assert_eq!(park.terrain()[ramp], Terrain::Path, "on the crossroads");
 
-        let park = run(park, 3_000);
+        // A step up is dearer to cross than flat ground — that is what sends a
+        // crowd round it — but it is still a route.
+        park.raise(ramp).unwrap();
+        let mut finder = PathFinder::new();
+        {
+            let map = ParkMap {
+                land: &park.land,
+                facilities: &park.facilities,
+            };
+            assert!(
+                finder.find(&map, below, ramp).is_some(),
+                "one step turned out to be a wall"
+            );
+        }
+
+        // A second one is a cliff, and a cliff is not a route.
+        park.raise(ramp).unwrap();
+        let map = ParkMap {
+            land: &park.land,
+            facilities: &park.facilities,
+        };
         assert!(
-            park.guests().iter().any(|guest| guest.tile() == ramp),
-            "a single step put the whole crowd off"
+            finder.find(&map, below, ramp).is_none(),
+            "somebody climbed two steps at once"
+        );
+    }
+
+    #[test]
+    fn a_new_park_has_hills_in_it_but_flat_paths() {
+        let park = Park::new("Rolling", 32, 32, 5).unwrap();
+        let land = park.land();
+
+        assert!(land.highest() > 0, "a new park came out flat");
+        assert!(
+            land.terrain()
+                .iter()
+                .filter(|(_, ground)| matches!(ground, Terrain::Path | Terrain::Water))
+                .all(|(tile, _)| land.height_at(tile) == Some(0)),
+            "a path or the lake climbed a hill"
+        );
+    }
+
+    #[test]
+    fn the_same_seed_rolls_the_same_hills() {
+        let one = Park::new("Rolling", 32, 32, 9).unwrap();
+        let two = Park::new("Rolling", 32, 32, 9).unwrap();
+        let other = Park::new("Rolling", 32, 32, 10).unwrap();
+
+        assert_eq!(one.land().heights(), two.land().heights());
+        assert_ne!(
+            one.land().heights(),
+            other.land().heights(),
+            "every seed rolled the same landscape"
         );
     }
 
@@ -2052,5 +2583,235 @@ mod tests {
         let loaded: Park = serde_json::from_str(&json).unwrap();
         assert_eq!(loaded, park);
         assert_eq!(loaded.land().height_at(TilePos::new(7, 7)), Some(2));
+    }
+    /// A park with one tested, open coaster on flat dry ground beside the
+    /// crossroads, and the money to have built it.
+    fn park_with_a_coaster() -> (Park, u32) {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let corner = TilePos::new(18, 16);
+        for dy in 0..6 {
+            for dx in 0..6 {
+                let tile = corner.offset(dx, dy);
+                park.lay(tile, Terrain::Grass).expect("grass should lay");
+                while park.land().height_at(tile).unwrap_or(0) > 0 {
+                    park.lower(tile).expect("the land should come down");
+                }
+            }
+        }
+
+        let id = park
+            .start_a_ride("The Coaster", corner, Heading::North)
+            .expect("a ride should start");
+        for side in [
+            [TrackPiece::Station, TrackPiece::LiftHill],
+            [TrackPiece::LiftHill, TrackPiece::LiftHill],
+            [TrackPiece::SlopeDown, TrackPiece::SlopeDown],
+            [TrackPiece::SlopeDown, TrackPiece::Brakes],
+        ] {
+            park.lay_track(id, TrackPiece::CurveRight)
+                .expect("a corner should lay");
+            for piece in side {
+                park.lay_track(id, piece).expect("a side should lay");
+            }
+        }
+
+        park.test_ride(id).expect("the coaster should run");
+        park.open_ride(id).expect("and open");
+        (park, id)
+    }
+
+    #[test]
+    fn a_ride_costs_what_its_track_costs() {
+        let (park, id) = park_with_a_coaster();
+        let ride = park.ride(id).expect("the ride is there");
+
+        assert_eq!(ride.track().len(), 12, "four corners and eight sides");
+        assert!(ride.track().cost() > 0);
+        assert!(
+            park.wage_bill() >= ride.upkeep(),
+            "a ride costs nothing to run"
+        );
+        assert!(park.cash() < 50_000 + Park::STARTING_CASH, "it was free");
+    }
+
+    #[test]
+    fn a_station_has_to_be_somewhere_guests_can_reach() {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let start = TilePos::new(18, 16);
+        park.lay(start, Terrain::Grass).unwrap();
+        let id = park.start_a_ride("Up There", start, Heading::East).unwrap();
+
+        park.lay_track(id, TrackPiece::LiftHill).unwrap();
+        assert!(
+            park.lay_track(id, TrackPiece::Station).is_err(),
+            "a station was built up in the air"
+        );
+    }
+
+    #[test]
+    fn track_cannot_be_laid_on_anything_that_is_already_there() {
+        let (mut park, _) = park_with_a_coaster();
+        let taken = park.rides()[0].track().tiles()[0];
+
+        assert!(park.build(taken, Facility::Bench).is_err(), "on the track");
+        assert!(park.raise(taken).is_err(), "the land under the track moved");
+
+        let another = park
+            .start_a_ride("The Other One", taken, Heading::North)
+            .err();
+        assert!(another.is_some(), "two rides on one tile");
+    }
+
+    #[test]
+    fn a_ride_cannot_be_laid_underground() {
+        let mut park = Park::new("Rides", 32, 32, 5).unwrap();
+        park.adjust_cash(50_000);
+
+        let start = TilePos::new(18, 16);
+        park.lay(start, Terrain::Grass).unwrap();
+        while park.land().height_at(start).unwrap_or(0) > 0 {
+            park.lower(start).unwrap();
+        }
+
+        let id = park
+            .start_a_ride("Down There", start, Heading::East)
+            .unwrap();
+        park.lay_track(id, TrackPiece::Station).unwrap();
+        assert!(
+            park.lay_track(id, TrackPiece::SlopeDown).is_err(),
+            "the track dug itself into the ground"
+        );
+    }
+
+    #[test]
+    fn guests_queue_for_a_ride_pay_for_it_and_come_back_off() {
+        let (park, id) = park_with_a_coaster();
+        let park = run(park, A_WHOLE_VISIT);
+
+        let ride = park.ride(id).expect("the ride is there");
+        assert!(ride.riders() > 0, "nobody went on it all day");
+        assert!(ride.takings() > 0, "and nobody paid");
+        assert!(
+            park.guests()
+                .iter()
+                .any(|guest| guest.needs().boredom() < 0.3),
+            "nobody in the park had anything to do"
+        );
+    }
+
+    #[test]
+    fn a_park_with_a_ride_keeps_its_guests_longer_than_one_without() {
+        let (with_a_ride, _) = park_with_a_coaster();
+        let with_a_ride = run(with_a_ride, A_WHOLE_VISIT);
+        let without = bare_park_opened_for(A_WHOLE_VISIT);
+
+        assert!(
+            with_a_ride.guests_who_left() < without.guests_who_left(),
+            "{} left the park with a coaster in it against {} from the empty one",
+            with_a_ride.guests_who_left(),
+            without.guests_who_left()
+        );
+    }
+
+    #[test]
+    fn nobody_queues_for_a_ride_priced_past_what_it_is_worth() {
+        let (mut park, id) = park_with_a_coaster();
+        park.set_ride_price(id, Ride::MAX_PRICE).unwrap();
+
+        let park = run(park, A_WHOLE_VISIT);
+        assert_eq!(
+            park.ride(id).map(Ride::riders),
+            Some(0),
+            "somebody paid the full hundred"
+        );
+    }
+
+    #[test]
+    fn a_worn_out_ride_breaks_down_and_a_mechanic_puts_it_back() {
+        let (mut park, id) = park_with_a_coaster();
+
+        // Worn right out, so the breakdown comes within a visit rather than
+        // within an afternoon.
+        for _ in 0..200_000 {
+            park.tick_once();
+            if park.ride(id).map(Ride::state) == Some(RideState::Broken) {
+                break;
+            }
+        }
+        assert_eq!(
+            park.ride(id).map(Ride::state),
+            Some(RideState::Broken),
+            "nothing ever went wrong with it"
+        );
+
+        // Nobody to fix it: it stays broken.
+        let park = run(park, 20_000);
+        assert_eq!(park.ride(id).map(Ride::state), Some(RideState::Broken));
+
+        let mut park = park;
+        park.adjust_cash(10_000);
+        park.hire(StaffKind::Mechanic).unwrap();
+        let park = run(park, 20_000);
+
+        assert_ne!(
+            park.ride(id).map(Ride::state),
+            Some(RideState::Broken),
+            "the mechanic never got to it"
+        );
+    }
+
+    #[test]
+    fn demolishing_a_ride_puts_whoever_is_aboard_back_on_their_feet() {
+        let (mut park, id) = park_with_a_coaster();
+        for _ in 0..A_WHOLE_VISIT {
+            park.tick_once();
+            if park.guests().iter().any(|guest| guest.riding() == Some(id)) {
+                break;
+            }
+        }
+        assert!(
+            park.guests().iter().any(|guest| guest.riding() == Some(id)),
+            "nobody ever got on"
+        );
+
+        park.demolish_ride(id).expect("the ride was there");
+        assert!(
+            park.guests().iter().all(|guest| guest.riding().is_none()),
+            "somebody is still aboard a ride that no longer exists"
+        );
+        assert!(park.rides().is_empty());
+    }
+
+    #[test]
+    fn a_bankrupt_park_cannot_build_a_ride() {
+        let mut park = bankrupt_park();
+        park.adjust_cash(100_000);
+
+        assert!(park
+            .start_a_ride("No Chance", TilePos::new(5, 5), Heading::North)
+            .is_err());
+    }
+
+    #[test]
+    fn a_park_survives_a_save_with_a_ride_mid_lap() {
+        let (park, id) = park_with_a_coaster();
+        let park = run(park, 5_000);
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded, park);
+        assert_eq!(
+            loaded.ride(id).map(Ride::stats),
+            park.ride(id).map(Ride::stats)
+        );
+        assert_eq!(
+            loaded.ride(id).map(|ride| ride.trains().to_vec()),
+            park.ride(id).map(|ride| ride.trains().to_vec())
+        );
     }
 }

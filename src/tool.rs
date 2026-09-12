@@ -1,6 +1,6 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, Park, Shop, StaffKind, Terrain};
+use crate::park::{Facility, Park, Shop, StaffKind, Terrain, TrackPiece};
 
 /// The thing the pointer is currently holding.
 ///
@@ -30,42 +30,131 @@ pub enum Tool {
     Lower,
     /// Clicking lays a new surface on the tile under the pointer.
     Lay(Terrain),
+    /// Clicking starts a new ride, with its first piece of track to go on the
+    /// tile under the pointer.
+    StartRide,
+    /// Clicking lays one more piece on the ride being built.
+    Track(TrackPiece),
+    /// Clicking takes the last piece of track back off it.
+    Unlay,
+    /// Clicking sends a test train round the ride under the pointer.
+    TestRide,
+    /// Clicking opens it to the queue.
+    OpenRide,
+    /// Clicking shuts it.
+    CloseRide,
+    /// Clicking takes the whole thing down.
+    DemolishRide,
 }
 
 impl Tool {
-    /// Every tool, in the order the space bar walks through them.
-    pub const ORDER: [Self; 15] = [
-        Self::Inspect,
-        Self::Build(Facility::FoodStall),
-        Self::Build(Facility::Bench),
-        Self::Demolish,
-        Self::RaisePrice,
-        Self::LowerPrice,
-        Self::Hire(StaffKind::Handyman),
-        Self::Hire(StaffKind::Entertainer),
-        Self::Fire,
-        Self::Raise,
-        Self::Lower,
-        Self::Lay(Terrain::Path),
-        Self::Lay(Terrain::Grass),
-        Self::Lay(Terrain::Dirt),
-        Self::Lay(Terrain::Water),
+    /// The toolbars, one per number key.
+    ///
+    /// The number row picks a toolbar and the space bar walks along the one in
+    /// hand. That is the only arrangement that stays usable as the list grows:
+    /// reaching "curve left" by pressing space twenty times is not a toolbar,
+    /// which is why the engine grew the number row.
+    pub const KITS: [&'static [Self]; 7] = [
+        // 1: look at things.
+        &[Self::Inspect],
+        // 2: stalls and benches.
+        &[
+            Self::Build(Facility::FoodStall),
+            Self::Build(Facility::Bench),
+            Self::Demolish,
+        ],
+        // 3: what anything charges, shop or ride.
+        &[Self::RaisePrice, Self::LowerPrice],
+        // 4: the payroll.
+        &[
+            Self::Hire(StaffKind::Handyman),
+            Self::Hire(StaffKind::Entertainer),
+            Self::Hire(StaffKind::Mechanic),
+            Self::Fire,
+        ],
+        // 5: the land itself.
+        &[
+            Self::Raise,
+            Self::Lower,
+            Self::Lay(Terrain::Path),
+            Self::Lay(Terrain::Grass),
+            Self::Lay(Terrain::Dirt),
+            Self::Lay(Terrain::Water),
+        ],
+        // 6: laying track.
+        &[
+            Self::StartRide,
+            Self::Track(TrackPiece::Station),
+            Self::Track(TrackPiece::Straight),
+            Self::Track(TrackPiece::CurveLeft),
+            Self::Track(TrackPiece::CurveRight),
+            Self::Track(TrackPiece::SlopeUp),
+            Self::Track(TrackPiece::SlopeDown),
+            Self::Track(TrackPiece::LiftHill),
+            Self::Track(TrackPiece::Brakes),
+            Self::Track(TrackPiece::Powered),
+            Self::Unlay,
+        ],
+        // 7: running the rides.
+        &[
+            Self::TestRide,
+            Self::OpenRide,
+            Self::CloseRide,
+            Self::DemolishRide,
+        ],
     ];
 
-    /// The next tool along, wrapping back to [`Tool::Inspect`].
+    /// Which toolbar this tool is on, counting from zero.
+    pub fn kit(self) -> usize {
+        Self::KITS
+            .iter()
+            .position(|kit| kit.contains(&self))
+            .unwrap_or(0)
+    }
+
+    /// The first tool on toolbar `kit`, or `None` if there is no such toolbar.
     ///
     /// ```
     /// # use openpark::tool::Tool;
-    /// let mut tool = Tool::Inspect;
-    /// for _ in 0..Tool::ORDER.len() {
+    /// assert_eq!(Tool::from_kit(0), Some(Tool::Inspect));
+    /// assert_eq!(Tool::from_kit(99), None, "there is no hundredth toolbar");
+    /// ```
+    pub fn from_kit(kit: usize) -> Option<Self> {
+        Self::KITS.get(kit)?.first().copied()
+    }
+
+    /// The next tool along the toolbar in hand, wrapping round it.
+    ///
+    /// ```
+    /// # use openpark::park::Facility;
+    /// # use openpark::tool::Tool;
+    /// let stall = Tool::Build(Facility::FoodStall);
+    ///
+    /// let mut tool = stall;
+    /// for _ in 0..Tool::KITS[stall.kit()].len() {
     ///     tool = tool.next();
     /// }
-    /// assert_eq!(tool, Tool::Inspect, "the cycle should come back round");
+    /// assert_eq!(tool, stall, "the cycle should come back round");
     /// ```
     #[must_use]
     pub fn next(self) -> Self {
-        let at = Self::ORDER.iter().position(|tool| *tool == self);
-        Self::ORDER[(at.unwrap_or(0) + 1) % Self::ORDER.len()]
+        let kit = Self::KITS[self.kit()];
+        let at = kit.iter().position(|tool| *tool == self).unwrap_or(0);
+        kit[(at + 1) % kit.len()]
+    }
+
+    /// What piece of track it is laying, if it is laying one.
+    pub const fn track(self) -> Option<TrackPiece> {
+        match self {
+            Self::Track(piece) => Some(piece),
+            _ => None,
+        }
+    }
+
+    /// Whether this tool wants a heading, which the arrow keys set while it is
+    /// in hand.
+    pub const fn wants_a_heading(self) -> bool {
+        matches!(self, Self::StartRide)
     }
 
     /// What it is building, if it is building anything.
@@ -115,6 +204,13 @@ impl Tool {
                 || format!("Lay {}", terrain.name().to_lowercase()),
                 |cost| format!("Lay {} ({cost})", terrain.name().to_lowercase()),
             ),
+            Self::StartRide => "Start a new ride".to_owned(),
+            Self::Track(piece) => format!("Lay {} ({})", piece.name().to_lowercase(), piece.cost()),
+            Self::Unlay => "Take the last piece of track off".to_owned(),
+            Self::TestRide => "Test the ride".to_owned(),
+            Self::OpenRide => "Open the ride".to_owned(),
+            Self::CloseRide => "Shut the ride".to_owned(),
+            Self::DemolishRide => "Demolish the ride".to_owned(),
         }
     }
 }
@@ -129,24 +225,57 @@ mod tests {
         assert!(!Tool::default().is_active());
     }
 
-    #[test]
-    fn the_cycle_reaches_everything_and_comes_back() {
-        let mut seen = Vec::new();
-        let mut tool = Tool::Inspect;
-        for _ in 0..Tool::ORDER.len() {
-            seen.push(tool);
-            tool = tool.next();
-        }
+    /// Every tool in the game, across every toolbar.
+    fn all_tools() -> Vec<Tool> {
+        Tool::KITS
+            .iter()
+            .flat_map(|kit| kit.iter().copied())
+            .collect()
+    }
 
-        assert_eq!(tool, Tool::Inspect);
-        for expected in Tool::ORDER {
-            assert!(seen.contains(&expected), "{expected:?} is unreachable");
+    #[test]
+    fn every_toolbar_cycles_through_itself_and_comes_back() {
+        for (number, kit) in Tool::KITS.iter().enumerate() {
+            let first = Tool::from_kit(number).expect("every toolbar has a tool on it");
+            let mut seen = Vec::new();
+            let mut tool = first;
+
+            for _ in 0..kit.len() {
+                seen.push(tool);
+                tool = tool.next();
+            }
+
+            assert_eq!(tool, first, "toolbar {number} does not come back round");
+            for expected in *kit {
+                assert!(seen.contains(expected), "{expected:?} is unreachable");
+            }
         }
     }
 
     #[test]
+    fn a_tool_only_ever_cycles_within_its_own_toolbar() {
+        for tool in all_tools() {
+            assert_eq!(
+                tool.next().kit(),
+                tool.kit(),
+                "{tool:?} cycles off its own toolbar"
+            );
+        }
+    }
+
+    #[test]
+    fn no_tool_is_on_two_toolbars() {
+        let mut every = all_tools();
+        let laid_out = every.len();
+        every.sort_by_key(|tool| format!("{tool:?}"));
+        every.dedup();
+
+        assert_eq!(every.len(), laid_out, "a tool appears on two toolbars");
+    }
+
+    #[test]
     fn everything_that_is_not_inspecting_changes_the_park() {
-        for tool in Tool::ORDER {
+        for tool in all_tools() {
             assert_eq!(tool.is_active(), tool != Tool::Inspect, "{tool:?}");
         }
     }
@@ -183,7 +312,7 @@ mod tests {
     fn everything_that_can_be_laid_is_in_the_cycle() {
         for terrain in Terrain::LAYABLE {
             assert!(
-                Tool::ORDER.contains(&Tool::Lay(terrain)),
+                all_tools().contains(&Tool::Lay(terrain)),
                 "{terrain:?} cannot be laid with the mouse"
             );
         }
@@ -193,13 +322,13 @@ mod tests {
     fn everything_that_can_be_built_or_hired_is_in_the_cycle() {
         for facility in Facility::ALL {
             assert!(
-                Tool::ORDER.contains(&Tool::Build(facility)),
+                all_tools().contains(&Tool::Build(facility)),
                 "{facility:?} cannot be built with the mouse"
             );
         }
         for kind in StaffKind::ALL {
             assert!(
-                Tool::ORDER.contains(&Tool::Hire(kind)),
+                all_tools().contains(&Tool::Hire(kind)),
                 "{kind:?} cannot be hired with the mouse"
             );
         }
@@ -207,7 +336,7 @@ mod tests {
 
     #[test]
     fn every_tool_says_what_it_is_and_what_it_costs() {
-        for tool in Tool::ORDER {
+        for tool in all_tools() {
             let label = tool.label();
             assert!(!label.is_empty(), "{tool:?} has no label");
 
