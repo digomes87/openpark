@@ -189,7 +189,7 @@ impl Park {
 
         let mut park = Self {
             name: name.into(),
-            land: Land::flat(terrain)?,
+            land: Land::rolling(terrain, &mut rng)?,
             facilities,
             guests: Vec::new(),
             staff: Vec::new(),
@@ -2030,15 +2030,65 @@ mod tests {
     }
 
     #[test]
-    fn a_gentle_ramp_is_still_walked_on() {
+    fn a_single_step_is_a_ramp_and_two_is_a_wall() {
         let mut park = Park::new("Ramped", 32, 32, 5).unwrap();
         let ramp = TilePos::new(16, 16);
-        park.raise(ramp).unwrap();
+        let below = TilePos::new(16, 15);
+        assert_eq!(park.terrain()[ramp], Terrain::Path, "on the crossroads");
 
-        let park = run(park, 3_000);
+        // A step up is dearer to cross than flat ground — that is what sends a
+        // crowd round it — but it is still a route.
+        park.raise(ramp).unwrap();
+        let mut finder = PathFinder::new();
+        {
+            let map = ParkMap {
+                land: &park.land,
+                facilities: &park.facilities,
+            };
+            assert!(
+                finder.find(&map, below, ramp).is_some(),
+                "one step turned out to be a wall"
+            );
+        }
+
+        // A second one is a cliff, and a cliff is not a route.
+        park.raise(ramp).unwrap();
+        let map = ParkMap {
+            land: &park.land,
+            facilities: &park.facilities,
+        };
         assert!(
-            park.guests().iter().any(|guest| guest.tile() == ramp),
-            "a single step put the whole crowd off"
+            finder.find(&map, below, ramp).is_none(),
+            "somebody climbed two steps at once"
+        );
+    }
+
+    #[test]
+    fn a_new_park_has_hills_in_it_but_flat_paths() {
+        let park = Park::new("Rolling", 32, 32, 5).unwrap();
+        let land = park.land();
+
+        assert!(land.highest() > 0, "a new park came out flat");
+        assert!(
+            land.terrain()
+                .iter()
+                .filter(|(_, ground)| matches!(ground, Terrain::Path | Terrain::Water))
+                .all(|(tile, _)| land.height_at(tile) == Some(0)),
+            "a path or the lake climbed a hill"
+        );
+    }
+
+    #[test]
+    fn the_same_seed_rolls_the_same_hills() {
+        let one = Park::new("Rolling", 32, 32, 9).unwrap();
+        let two = Park::new("Rolling", 32, 32, 9).unwrap();
+        let other = Park::new("Rolling", 32, 32, 10).unwrap();
+
+        assert_eq!(one.land().heights(), two.land().heights());
+        assert_ne!(
+            one.land().heights(),
+            other.land().heights(),
+            "every seed rolled the same landscape"
         );
     }
 

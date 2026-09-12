@@ -22,7 +22,13 @@ const DEPTH_SHADE: f32 = 0.15;
 /// How much darker the side of a step is than its top.
 ///
 /// The one light source in the park: tops are lit, faces are not.
-const FACE_SHADE: f32 = 0.62;
+const FACE_SHADE: f32 = 0.5;
+
+/// How much brighter each step up a hill is drawn.
+///
+/// Without it a hill of grass is the same green as the plain it stands on, and
+/// the only thing saying it is a hill is a sliver of shadow along one edge.
+const HEIGHT_SHEEN: f32 = 0.11;
 
 /// Draws the whole visible park, back to front and bottom up.
 pub fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
@@ -41,8 +47,9 @@ pub fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
             continue;
         };
 
-        let colour = terrain.colour().shaded(depth(tile, reach));
         let top = land.height_at(tile).unwrap_or(Land::MIN_HEIGHT);
+        let sheen = 1.0 + f32::from(top) * HEIGHT_SHEEN;
+        let colour = terrain.colour().shaded(depth(tile, reach) * sheen);
 
         // The face first, so the lit top is drawn over the top of it.
         for step in (drops_to(land, tile)..top).rev() {
@@ -134,15 +141,16 @@ mod tests {
     }
 
     #[test]
-    fn flat_land_is_one_diamond_a_tile() {
+    fn every_tile_gets_a_top_and_a_hill_gets_a_face() {
         let (park, camera) = fixture();
         let mut canvas = Recorder::new();
         draw_land(&mut canvas, &park, &camera);
 
-        assert_eq!(
+        assert!(
+            fills(&canvas) > park.terrain().len(),
+            "{} diamonds for {} tiles: the hills have no faces",
             fills(&canvas),
-            park.terrain().len(),
-            "a flat park should need no faces drawn"
+            park.terrain().len()
         );
     }
 
@@ -161,10 +169,9 @@ mod tests {
 
         let mut after = Recorder::new();
         draw_land(&mut after, &park, &camera);
-        assert_eq!(
-            fills(&after),
-            fills(&before) + 3,
-            "three steps up should add three steps of face"
+        assert!(
+            fills(&after) > fills(&before),
+            "raising a tile drew no more of its face"
         );
     }
 

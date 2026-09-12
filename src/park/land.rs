@@ -15,9 +15,23 @@ use core::num::NonZeroU32;
 use anyhow::{Context, Result};
 use isogrid::grid::Grid;
 use isogrid::iso::{GridPoint, TilePos};
+use isogrid::rng::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::park::Terrain;
+
+/// A whole turn, for picking where in a wave the hills start.
+const TWO_PI: f32 = core::f32::consts::TAU;
+
+/// How many tiles a hill takes to rise and fall, across the map and along it.
+///
+/// Deliberately not the same number: equal ones make a grid of identical
+/// pimples rather than a landscape.
+const HILL_WIDTH: f32 = 7.0;
+const HILL_DEPTH: f32 = 9.0;
+
+/// How many steps the tallest hill stands.
+const HILL_HEIGHT: f32 = 2.5;
 
 /// The land a park is built on.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -58,6 +72,81 @@ impl Land {
             .context("the park is too small or too large for the engine to hold")?;
 
         Ok(Self { terrain, heights })
+    }
+
+    /// Land with gentle hills rolled into it.
+    ///
+    /// Two sine waves crossed, with the phase taken from `rng` so that two
+    /// seeds do not produce the same hills. Paths and water are left at the
+    /// base: a crossroads that climbed a hill would arrive at the gate as a
+    /// staircase, and water that did would be a waterfall.
+    ///
+    /// # Errors
+    ///
+    /// As [`Land::flat`].
+    pub fn rolling(terrain: Grid<Terrain>, rng: &mut Rng) -> Result<Self> {
+        let mut land = Self::flat(terrain)?;
+
+        let (across, along) = (rng.next_f32() * TWO_PI, rng.next_f32() * TWO_PI);
+        for tile in land.terrain.positions().collect::<Vec<_>>() {
+            if matches!(land.ground(tile), Some(Terrain::Path | Terrain::Water)) {
+                continue;
+            }
+
+            #[allow(clippy::cast_precision_loss)]
+            let (x, y) = (tile.x as f32, tile.y as f32);
+            let rise = (x / HILL_WIDTH + across).sin() + (y / HILL_DEPTH + along).sin();
+
+            // Half the map is below zero and stays at the base, so the hills
+            // read as hills on a plain rather than as a rolling swell with no
+            // flat ground anywhere.
+            #[allow(clippy::cast_possible_truncation)]
+            let steps = (rise * HILL_HEIGHT) as i16;
+            land.heights
+                .replace(tile, steps.clamp(Self::MIN_HEIGHT, Self::MAX_HEIGHT));
+        }
+
+        land.smooth();
+        Ok(land)
+    }
+
+    /// Files the generated landscape down until nobody could fall off it.
+    ///
+    /// Raw sine hills meet the flat paths in a two-step drop, and a two-step
+    /// drop is a cliff: it walls the paths in and puts every stall built on the
+    /// verge out of reach. So each tile is brought down to one step above its
+    /// lowest neighbour, over and over until nothing moves.
+    ///
+    /// Only ever downwards, so the water and the paths stay where they were put.
+    /// Heights are bounded below, so this terminates; the pass count is capped
+    /// anyway, because a generator that will not settle should produce a dull
+    /// park rather than hang.
+    fn smooth(&mut self) {
+        for _ in 0..=Self::MAX_HEIGHT {
+            let mut filed_anything = false;
+
+            for tile in self.terrain.positions().collect::<Vec<_>>() {
+                let Some(height) = self.height_at(tile) else {
+                    continue;
+                };
+
+                let lowest = tile
+                    .neighbours()
+                    .iter()
+                    .filter_map(|beside| self.height_at(*beside))
+                    .min()
+                    .unwrap_or(Self::MIN_HEIGHT);
+
+                if height > lowest + Self::MAX_STEP {
+                    self.heights.replace(tile, lowest + Self::MAX_STEP);
+                    filed_anything = true;
+                }
+            }
+
+            if !filed_anything {
+                return;
+            }
+        }
     }
 
     /// What the ground is made of, tile by tile.
@@ -326,5 +415,53 @@ mod tests {
 
         let json = serde_json::to_string(&land).unwrap();
         assert_eq!(serde_json::from_str::<Land>(&json).unwrap(), land);
+    }
+    #[test]
+    fn generated_hills_are_gentle_enough_to_walk_on() {
+        for seed in 0..8 {
+            let land = Land::rolling(
+                Grid::filled(24, 24, Terrain::Grass).unwrap(),
+                &mut Rng::from_seed(seed),
+            )
+            .unwrap();
+
+            for (tile, _) in land.terrain().iter() {
+                for beside in tile.neighbours() {
+                    let Some(there) = land.height_at(beside) else {
+                        continue;
+                    };
+                    let here = land.height_at(tile).unwrap();
+                    assert!(
+                        (here - there).abs() <= Land::MAX_STEP,
+                        "seed {seed} left a cliff between {tile:?} and {beside:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rolling_land_has_hills_in_it() {
+        let land = Land::rolling(
+            Grid::filled(24, 24, Terrain::Grass).unwrap(),
+            &mut Rng::from_seed(3),
+        )
+        .unwrap();
+
+        assert!(
+            land.highest() > 0,
+            "the generator produced a billiard table"
+        );
+    }
+
+    #[test]
+    fn water_and_paths_are_left_at_the_base() {
+        let mut terrain = Grid::filled(24, 24, Terrain::Grass).unwrap();
+        terrain.replace(TilePos::new(12, 12), Terrain::Water);
+        terrain.replace(TilePos::new(4, 4), Terrain::Path);
+
+        let land = Land::rolling(terrain, &mut Rng::from_seed(1)).unwrap();
+        assert_eq!(land.height_at(TilePos::new(12, 12)), Some(0));
+        assert_eq!(land.height_at(TilePos::new(4, 4)), Some(0));
     }
 }
