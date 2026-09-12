@@ -5,13 +5,14 @@
 
 mod facility;
 mod guest;
+mod land;
 mod staff;
 
 use isogrid::camera::Camera;
 use isogrid::iso::{ScreenPoint, TilePos};
-use isogrid::render::{draw_tiles, Color, Renderer, TileShape};
+use isogrid::render::{Color, Renderer, TileShape};
 
-use crate::park::{Facility, Park};
+use crate::park::Park;
 use crate::tool::Tool;
 
 /// The colour behind everything, where there is no park.
@@ -55,7 +56,7 @@ pub struct Overlay<'a> {
 /// HUD goes over everything.
 pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &Overlay<'_>) {
     canvas.clear(SKY);
-    draw_land(canvas, park, camera);
+    land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
     staff::draw_staff(canvas, park, camera);
@@ -65,27 +66,6 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     }
 
     draw_hud(canvas, park, camera, overlay);
-}
-
-/// Paints the ground, shading tiles by depth so the land reads as a solid mass
-/// rather than a flat sheet of colour.
-fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
-    let depth = f32::from(u16::try_from(park.width() + park.height()).unwrap_or(u16::MAX));
-
-    draw_tiles(canvas, camera, park.terrain(), |tile, terrain| {
-        // A gentle gradient from the back of the map to the front: at most a
-        // fifth of the brightness, which is enough to give the land shape
-        // without looking like a lighting bug.
-        #[allow(clippy::cast_precision_loss)]
-        let along = (tile.x + tile.y) as f32 / depth;
-
-        // The floor of a stall is its own colour, so that what is built reads
-        // even at a zoom where its posts are a couple of pixels.
-        let colour = park
-            .facility_at(tile)
-            .map_or_else(|| terrain.colour(), Facility::colour);
-        Some(colour.shaded(0.85 + along * 0.15))
-    });
 }
 
 /// Outlines and tints the tile under the pointer.
@@ -99,7 +79,7 @@ fn draw_highlight(
     tool: Tool,
     park: &Park,
 ) {
-    let shape = tile_shape(camera, tile);
+    let shape = tile_shape(camera, park, tile);
     canvas.fill_tile(shape, tint(tool, park, tile));
     canvas.stroke_tile(shape, 2.0, TEXT);
 }
@@ -114,6 +94,8 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         // what decides it is the bank balance.
         Tool::Hire(kind) => !park.is_bankrupt() && park.cash() >= kind.hire_cost(),
         Tool::Fire => park.staff().iter().any(|member| member.tile() == tile),
+        Tool::Raise | Tool::Lower => park.can_reshape(tile),
+        Tool::Lay(terrain) => park.can_lay(tile, terrain),
     };
 
     if allowed {
@@ -123,13 +105,9 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
     }
 }
 
-/// Where a tile lands on screen, at the camera's current zoom.
-fn tile_shape(camera: &Camera, tile: TilePos) -> TileShape {
-    TileShape {
-        centre: camera.world_to_screen(tile.centre()),
-        width: camera.tiles().width() * camera.zoom(),
-        height: camera.tiles().height() * camera.zoom(),
-    }
+/// Where a tile lands on screen, on top of the land rather than at the base.
+fn tile_shape(camera: &Camera, park: &Park, tile: TilePos) -> TileShape {
+    land::shape(camera, tile, park.land().elevation(tile))
 }
 
 /// Draws the status lines in the corner.
@@ -200,7 +178,7 @@ mod tests {
     use isogrid::iso::TileSize;
     use isogrid::render::{Command, Recorder};
 
-    use crate::park::Terrain;
+    use crate::park::{Facility, Terrain};
 
     fn fixture() -> (Park, Camera) {
         let park = Park::new("Test Park", 16, 16, 1).expect("a valid park");

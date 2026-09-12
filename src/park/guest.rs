@@ -162,6 +162,11 @@ impl Guest {
         self.walk.is_idle()
     }
 
+    /// How far between its two tiles the guest is, from 0 to 1.
+    pub const fn progress(&self) -> f32 {
+        self.walk.progress()
+    }
+
     /// Where the guest is, in grid space, between the two tiles of its step.
     pub fn position(&self) -> GridPoint {
         self.walk.position()

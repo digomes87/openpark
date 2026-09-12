@@ -10,6 +10,7 @@ use isogrid::iso::ScreenPoint;
 use isogrid::render::{Color, Renderer};
 
 use crate::park::{Guest, Park};
+use crate::view::land;
 
 /// What a guest casts on the ground.
 const SHADOW: Color = Color::rgba(0, 0, 0, 55);
@@ -44,7 +45,15 @@ pub fn draw_guests(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
     let mut crowd: Vec<(ScreenPoint, &Guest)> = park
         .guests()
         .iter()
-        .map(|guest| (camera.world_to_screen(guest.position()), guest))
+        .map(|guest| {
+            let standing = land::between(
+                park.land(),
+                guest.tile(),
+                guest.next_tile(),
+                guest.progress(),
+            );
+            (camera.world_to_screen(standing), guest)
+        })
         .filter(|(feet, _)| is_on_screen(*feet, camera, scale))
         .collect();
 
