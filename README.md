@@ -44,7 +44,16 @@ one a decision.
 ![A wooden coaster beside the crossroads: a station with a queue beside it, a
 chain lift, and raised track on timber supports](docs/images/coaster.png)
 
-Rides are built a piece at a time — station, straight, curves, slopes, a chain
+Not every ride is a coaster. A carousel, a ferris wheel, a haunted house and
+spinning teacups are bought rather than built: they stand on their own square of
+level ground, load, turn, and let everybody off. Guests arrive with a nerve as
+well as a wallet and will not go near a ride rougher than they are brave, which
+is why a park of nothing but lift hills has nothing at all for half its crowd.
+
+![A carousel beside the crossroads, with the coaster behind
+it](docs/images/carousel.png)
+
+Coasters are built a piece at a time — station, straight, curves, slopes, a chain
 lift, brakes, and driven track for the gentle ones — and a ride has to pass a
 test run before anybody is let on. A layout has to earn its speed from its own
 height: send a train at a hill it cannot climb and the test train stalls, and a
@@ -108,7 +117,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `1` – `9` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery |
+| `1` – `9`, `0` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery, flat rides |
 | `Space` | Walk along the toolbar in hand |
 | Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |

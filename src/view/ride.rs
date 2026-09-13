@@ -141,23 +141,26 @@ fn draw_flat(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, scale: f32
         )
     });
 
-    let base = camera.world_to_screen(isogrid::iso::GridPoint::new(middle.0, middle.1, middle.2));
-    let width = f32::from(u16::try_from(kind.footprint()).unwrap_or(1)) * scale * 0.4;
+    let base = camera.world_to_screen(GridPoint::new(middle.0, middle.1, middle.2));
+    let across = f32::from(u16::try_from(kind.footprint()).unwrap_or(1)) * scale * 0.4;
     let height = kind.height() * scale;
+    let top = ScreenPoint::new(base.x, base.y - height);
 
-    // The frame it stands on, then the machine itself above it, so a ferris
-    // wheel reads as a wheel on legs rather than a stripe on the grass.
+    // Three lines: the frame it stands on, a column up the middle, and a canopy
+    // across the top. A single block the size of its footprint reads as a wall,
+    // and a carousel is not a wall.
     canvas.line(
-        ScreenPoint::new(base.x - width / 2.0, base.y),
-        ScreenPoint::new(base.x + width / 2.0, base.y),
-        scale * 0.12,
+        ScreenPoint::new(base.x - across / 2.0, base.y),
+        ScreenPoint::new(base.x + across / 2.0, base.y),
+        scale * 0.14,
         kind.frame_colour(),
     );
+    canvas.line(base, top, across * 0.55, kind.colour());
     canvas.line(
-        base,
-        ScreenPoint::new(base.x, base.y - height),
-        width,
-        kind.colour(),
+        ScreenPoint::new(base.x - across * 0.6, top.y),
+        ScreenPoint::new(base.x + across * 0.6, top.y),
+        scale * 0.16,
+        kind.frame_colour(),
     );
 }
 
@@ -273,6 +276,29 @@ mod tests {
             .iter()
             .filter(|command| matches!(command, Command::Line(..)))
             .count()
+    }
+
+    #[test]
+    fn a_flat_ride_is_a_frame_a_column_and_a_canopy() {
+        let mut park = Park::new("Bought", 32, 32, 5).expect("a valid park");
+        park.adjust_cash(10_000);
+        park.buy_a_ride(
+            "The Carousel",
+            crate::park::FlatRide::Carousel,
+            TilePos::new(18, 16),
+        )
+        .expect("there should be room");
+
+        let mut camera = Camera::new(TileSize::CLASSIC, Viewport::new(1600.0, 1200.0).unwrap());
+        camera.look_at(TilePos::new(18, 16).centre());
+
+        let mut canvas = Recorder::new();
+        draw_rides(&mut canvas, &park, &camera);
+        assert_eq!(
+            lines(&canvas),
+            3,
+            "a flat ride has no track and one machine"
+        );
     }
 
     #[test]

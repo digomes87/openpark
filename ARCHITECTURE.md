@@ -38,7 +38,8 @@ src/
 │   ├── needs.rs       Needs: hunger, energy and mood, and nothing else
 │   ├── staff.rs       Staff: somebody on the payroll, and the job they do
 │   ├── track.rs       Track: the shape a ride is built out of
-│   ├── ride.rs        Ride: trains, physics, test runs and what it is worth
+│   ├── ride.rs        Ride: a layout, trains, test runs, and what it is worth
+│   ├── flat.rs        FlatRide: the rides that come as they are
 │   └── walk.rs        Walk: a route and a position, shared by both of them
 ├── view/          drawing, entirely through isogrid::render::Renderer
 │   ├── mod.rs         the frame: sky, land, hover highlight, HUD
