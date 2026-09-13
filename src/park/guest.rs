@@ -443,6 +443,14 @@ impl Guest {
             .with_context(|| format!("guest {} cannot follow that route", self.id))
     }
 
+    /// Stops where it is, dropping whatever route it was following.
+    ///
+    /// What joining a queue does: a guest that keeps walking the route it took
+    /// to get to the line walks straight past its place in it.
+    pub fn stop(&mut self) {
+        self.walk.stop();
+    }
+
     /// Walks `distance` tiles along the route, stopping at the end of it.
     pub fn advance(&mut self, distance: f32) {
         self.walk.advance(distance);

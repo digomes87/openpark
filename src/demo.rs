@@ -16,6 +16,9 @@ const OFFSET: i32 = 2;
 /// How many tiles of ground are cleared for it.
 const CLEARING: i32 = 6;
 
+/// How long a queue is laid for it.
+const QUEUE_LENGTH: i32 = 5;
+
 /// Lays a tested, open coaster beside the crossroads, and returns its id.
 ///
 /// A chain lift three steps up, three drops back down, and brakes before the
@@ -66,11 +69,61 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
         }
     }
 
+    queue_for(park, id).context("the demo coaster has nowhere to queue")?;
+
     park.test_ride(id).context("the demo coaster stalls")?;
     park.open_ride(id)
         .context("the demo coaster will not open")?;
 
     Ok(id)
+}
+
+/// Lays a queue path leading away from a ride's station.
+///
+/// Away from the ride rather than into the middle of it: the obvious neighbour
+/// of a station on a ring layout is the inside of the ring, which runs out of
+/// room after a tile or two.
+///
+/// # Errors
+///
+/// Fails if the ride has no station, or if the ground beside it will not take a
+/// queue.
+fn queue_for(park: &mut Park, ride: u32) -> Result<()> {
+    let station = *park
+        .ride(ride)
+        .context("there is no such ride")?
+        .track()
+        .stations()
+        .first()
+        .context("the ride has no station")?;
+
+    let room = |park: &Park, (dx, dy): (i32, i32)| {
+        let mut tile = station;
+        let mut count = 0;
+        while count < QUEUE_LENGTH {
+            let next = tile.offset(dx, dy);
+            if park.ride_at(next).is_some() || !park.land().contains(next) {
+                break;
+            }
+            count += 1;
+            tile = next;
+        }
+        count
+    };
+
+    let way = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+        .into_iter()
+        .max_by_key(|way| room(park, *way))
+        .context("a station with no sides")?;
+
+    let mut tile = station;
+    for _ in 0..room(park, way) {
+        tile = tile.offset(way.0, way.1);
+        park.lay(tile, Terrain::Queue)
+            .with_context(|| format!("{tile:?} will not take a queue"))?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -94,6 +147,16 @@ mod tests {
         let stats = ride.stats().expect("it was tested");
         assert!(stats.excitement > 0.0, "it is not a coaster if it is dull");
         assert_eq!(ride.track().longest_drop(), 2, "two drops in a row");
+
+        let queue = park
+            .terrain()
+            .iter()
+            .filter(|(_, ground)| **ground == Terrain::Queue)
+            .count();
+        assert!(
+            queue >= 3,
+            "the demo ride has nowhere to queue: {queue} tiles"
+        );
     }
 
     #[test]
@@ -102,13 +165,19 @@ mod tests {
         park.adjust_cash(50_000);
         let id = coaster(&mut park).unwrap();
 
+        let mut ever_queued = false;
         for _ in 0..20_000 {
             park.tick_once();
+            ever_queued |= park.ride(id).is_some_and(|ride| !ride.queue().is_empty());
         }
 
         assert!(
             park.ride(id).is_some_and(|ride| ride.riders() > 0),
             "nobody rode the ride the screenshots are of"
         );
+        // Checked across the whole day rather than at the end of it: a line
+        // that is empty right now is a line the train has just cleared, which
+        // is the queue working rather than the queue missing.
+        assert!(ever_queued, "nobody ever stood in the queue that was laid");
     }
 }

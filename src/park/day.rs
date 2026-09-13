@@ -62,10 +62,41 @@ impl Park {
     /// front boards last, so a train that is loading takes whoever has actually
     /// reached the front rather than whoever is nearest to it.
     fn work_the_queues(&mut self) {
+        self.clear_out_the_lines();
         self.join_the_queues();
         self.shuffle_the_queues();
         self.load_the_trains();
         self.give_up_waiting();
+    }
+
+    /// Drops anybody from a line who is no longer waiting in it.
+    ///
+    /// A guest that gives up on the day decides to go home, and a guest that has
+    /// decided to go home does not change its mind — so without this it keeps
+    /// its place at the front of a queue it is walking away from, and nobody
+    /// behind it ever boards.
+    fn clear_out_the_lines(&mut self) {
+        for at in 0..self.rides.len() {
+            let ride = self.rides[at].id();
+            let gone: Vec<u32> = self.rides[at]
+                .queue()
+                .waiting()
+                .iter()
+                .copied()
+                .filter(|id| {
+                    self.guests
+                        .iter()
+                        .find(|guest| guest.id() == *id)
+                        .is_none_or(|guest| {
+                            guest.queueing_for().map(|(ride, _)| ride) != Some(ride)
+                        })
+                })
+                .collect();
+
+            for id in gone {
+                self.rides[at].queue_mut().leave(id);
+            }
+        }
     }
 
     /// Puts guests who have walked to a line into it.
@@ -98,10 +129,16 @@ impl Park {
                 continue;
             }
 
-            if !self.rides[at].queue_mut().join(id) {
-                // The line is full: come back another time.
+            // A line holds as many as there is path to stand on. Laying more
+            // queue is what makes a popular ride able to hold its crowd.
+            if self.rides[at].queue().len() >= line.len() || !self.rides[at].queue_mut().join(id) {
                 self.guests[index].decide(Plan::Wandering);
+                continue;
             }
+
+            // Whatever route it walked to get here is finished with: standing
+            // still lets the shuffle put it in its place.
+            self.guests[index].stop();
         }
     }
 
@@ -508,7 +545,7 @@ impl Park {
                         trampled.push(here);
                     }
 
-                    guest.advance(Self::speed_across(ground));
+                    guest.advance(Self::speed_across(ground) * Self::pace_of(guest));
                     continue;
                 }
 
@@ -543,7 +580,7 @@ impl Park {
                 }
 
                 let standing_on = land.ground(guest.tile()).unwrap_or(Terrain::Grass);
-                guest.advance(Self::speed_across(standing_on));
+                guest.advance(Self::speed_across(standing_on) * Self::pace_of(guest));
             }
 
             (takings, sales, trampled)
@@ -647,6 +684,18 @@ impl Park {
         }
     }
 
+    /// How much faster than a stroll this guest is moving.
+    ///
+    /// Only one thing changes it: somebody shuffling up a queue is not out for
+    /// a walk.
+    fn pace_of(guest: &Guest) -> f32 {
+        if guest.queueing_for().is_some() {
+            Self::QUEUE_SHUFFLE
+        } else {
+            1.0
+        }
+    }
+
     /// How far a guest standing on `terrain` moves in one tick.
     fn speed_across(terrain: Terrain) -> f32 {
         let cost = terrain.walk_cost().unwrap_or(1);
@@ -663,7 +712,7 @@ mod tests {
     use isogrid::iso::TilePos;
 
     use crate::park::fixtures::{park_with_a_coaster, run};
-    use crate::park::Queue;
+    use crate::park::{Queue, Ride, Train};
 
     #[test]
     fn rough_ground_slows_a_guest_down() {
@@ -866,5 +915,54 @@ mod tests {
         let loaded: Park = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.ride(id).unwrap().queue().waiting(), waiting);
+    }
+
+    #[test]
+    fn a_full_line_fills_a_whole_train() {
+        let (park, id, _) = park_with_a_queue();
+        let mut park = park;
+
+        let mut fullest = 0;
+        for _ in 0..12_000 {
+            park.tick_once();
+            fullest = fullest.max(
+                park.ride(id)
+                    .and_then(|ride| ride.trains().iter().map(Train::riders).max())
+                    .unwrap_or(0),
+            );
+        }
+
+        assert_eq!(
+            fullest,
+            Ride::SEATS,
+            "the best the queue managed was {fullest} of {} seats: the line \
+             cannot keep up with the train",
+            Ride::SEATS
+        );
+    }
+
+    #[test]
+    fn somebody_who_gives_up_on_the_day_gives_up_their_place_in_the_line() {
+        let (mut park, id, _) = park_with_a_queue();
+        for _ in 0..6_000 {
+            park.tick_once();
+        }
+
+        let waiting = park.ride(id).unwrap().queue().waiting().to_vec();
+        let leaving = *waiting.first().expect("nobody was queueing");
+
+        // The front of the line decides it has had enough. Without the line
+        // being cleared out, nobody behind it would ever board again.
+        for guest in &mut park.guests {
+            if guest.id() == leaving {
+                guest.decide(Plan::GoingHome);
+            }
+        }
+        park.tick_once();
+
+        assert!(
+            !park.ride(id).unwrap().queue().holds(leaving),
+            "somebody on their way home is still holding up the queue"
+        );
     }
 }

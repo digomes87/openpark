@@ -102,6 +102,27 @@ impl Walk {
         Ok(())
     }
 
+    /// Stops where it is, dropping whatever route it was following.
+    ///
+    /// ```
+    /// # use openpark::park::Walk;
+    /// # use isogrid::iso::TilePos;
+    /// let mut walk = Walk::standing_at(TilePos::ORIGIN);
+    /// walk.follow(vec![TilePos::ORIGIN, TilePos::new(0, 1)])?;
+    /// walk.advance(0.5);
+    ///
+    /// walk.stop();
+    /// assert!(walk.is_idle(), "it kept walking");
+    /// assert_eq!(walk.tile(), TilePos::ORIGIN, "it teleported");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn stop(&mut self) {
+        let here = self.tile();
+        self.route = vec![here];
+        self.step = 0;
+        self.progress = 0.0;
+    }
+
     /// Walks `distance` tiles along the route, stopping at the end of it.
     ///
     /// Ignores a distance that is negative or not a number, so that a bad speed

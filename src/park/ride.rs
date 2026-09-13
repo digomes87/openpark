@@ -282,7 +282,11 @@ impl Ride {
     pub const SEATS: u32 = 8;
 
     /// How long a train stands in the station, loading.
-    pub const DWELL: u32 = 120;
+    ///
+    /// Long enough for a full line to file aboard one at a time: eight seats at
+    /// a tile of shuffling each. A shorter dwell is not a busier ride, it is a
+    /// ride that leaves half empty.
+    pub const DWELL: u32 = 240;
 
     /// How many ticks a test run is given to come back round.
     ///
