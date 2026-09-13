@@ -233,18 +233,18 @@ mod tests {
     #[test]
     fn the_line_stands_along_the_queue_path() {
         let station = TilePos::new(5, 5);
-        let laid = [
+        let path = [
             TilePos::new(5, 6),
             TilePos::new(5, 7),
             TilePos::new(5, 8),
             TilePos::new(6, 8),
         ];
-        let land = land_with(&laid);
+        let ground = land_with(&path);
 
-        let line = line_from(&land, station);
-        assert_eq!(line.len(), laid.len());
-        assert_eq!(line[0], laid[0], "the front is beside the station");
-        assert_eq!(line[3], laid[3], "the back is the far end of the path");
+        let line = line_from(&ground, station);
+        assert_eq!(line.len(), path.len());
+        assert_eq!(line[0], path[0], "the front is beside the station");
+        assert_eq!(line[3], path[3], "the back is the far end of the path");
     }
 
     #[test]
@@ -271,13 +271,13 @@ mod tests {
     fn a_line_is_capped_however_much_path_is_laid() {
         let station = TilePos::new(0, 0);
         #[allow(clippy::cast_possible_wrap)]
-        let laid: Vec<TilePos> = (1..60).map(|y| TilePos::new(0, y as i32)).collect();
-        let mut land = Land::flat(Grid::filled(4, 64, Terrain::Grass).unwrap()).unwrap();
-        for tile in &laid {
-            land.set_ground(*tile, Terrain::Queue);
+        let path: Vec<TilePos> = (1..60).map(|y| TilePos::new(0, y)).collect();
+        let mut ground = Land::flat(Grid::filled(4, 64, Terrain::Grass).unwrap()).unwrap();
+        for tile in &path {
+            ground.set_ground(*tile, Terrain::Queue);
         }
 
-        assert_eq!(line_from(&land, station).len(), Queue::MAX_LENGTH);
+        assert_eq!(line_from(&ground, station).len(), Queue::MAX_LENGTH);
     }
 
     #[test]

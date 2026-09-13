@@ -90,11 +90,12 @@ pub fn describe(park: &Park, tile: TilePos) -> String {
         );
 
         return format!(
-            "{} — {:?}, {} each, {stats}, {} ridden",
+            "{} — {:?}, {} each, {stats}, {} ridden, {} queueing",
             ride.name(),
             ride.state(),
             ride.price(),
-            ride.riders()
+            ride.riders(),
+            ride.queue().len()
         );
     }
 

@@ -89,9 +89,11 @@ pub fn nearest_ride(
     candidates.sort_unstable();
 
     for (_, ride, station) in candidates.into_iter().take(Park::FACILITY_ATTEMPTS) {
-        // Guests board from the tile beside the station, never off the track.
-        for beside in station.neighbours() {
-            if let Some(route) = finder.find(map, from, beside) {
+        // The back of the line, not the station: a guest joins a queue where it
+        // ends, and the line itself walks it to the front.
+        let line = crate::park::queue::line_from(map.land, station);
+        for standing in line.into_iter().rev() {
+            if let Some(route) = finder.find(map, from, standing) {
                 return Some((ride, station, route.tiles().to_vec()));
             }
         }

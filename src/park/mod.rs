@@ -140,6 +140,9 @@ impl Park {
     /// How much mood a guest loses per tick of standing on worn-out ground.
     const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
 
+    /// How much mood a guest loses for standing in a line and giving up on it.
+    const GAVE_UP_QUEUEING: f32 = 0.15;
+
     /// How much mood a guest gains per tick of walking near an entertainer.
     const ENTERTAINED: f32 = 1.0 / 1_500.0;
 
