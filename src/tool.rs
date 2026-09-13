@@ -1,6 +1,8 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, FlatRide, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece};
+use crate::park::{
+    Campaign, Facility, FlatRide, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece,
+};
 
 /// The thing the pointer is currently holding.
 ///
@@ -55,6 +57,12 @@ pub enum Tool {
     Uproot,
     /// Clicking buys one of these and stands it on the tile under the pointer.
     Buy(FlatRide),
+    /// Clicking borrows another slice from the bank.
+    Borrow,
+    /// Clicking pays a slice of it back.
+    Repay,
+    /// Clicking buys a marketing campaign.
+    Advertise,
 }
 
 impl Tool {
@@ -106,8 +114,12 @@ impl Tool {
             Self::Track(TrackPiece::Powered),
             Self::Unlay,
         ],
-        // 7: running the rides.
+        // 7: rides — the ones that come as they are, and running any of them.
         &[
+            Self::Buy(FlatRide::Carousel),
+            Self::Buy(FlatRide::FerrisWheel),
+            Self::Buy(FlatRide::HauntedHouse),
+            Self::Buy(FlatRide::TeaCups),
             Self::TestRide,
             Self::OpenRide,
             Self::CloseRide,
@@ -125,14 +137,9 @@ impl Tool {
             Self::Plant(Scenery::Lamp),
             Self::Uproot,
         ],
-        // 0: rides that come as they are. Last on the row and last in the list,
-        // because the number row runs 1 to 9 and then round to 0.
-        &[
-            Self::Buy(FlatRide::Carousel),
-            Self::Buy(FlatRide::FerrisWheel),
-            Self::Buy(FlatRide::HauntedHouse),
-            Self::Buy(FlatRide::TeaCups),
-        ],
+        // 0: the money. Last on the row and last in the list, because the
+        // number row runs 1 to 9 and then round to 0.
+        &[Self::Borrow, Self::Repay, Self::Advertise],
     ];
 
     /// Which toolbar this tool is on, counting from zero.
@@ -268,6 +275,9 @@ impl Tool {
                 )
             }
             Self::Uproot => "Take the scenery down".to_owned(),
+            Self::Borrow => format!("Borrow {} from the bank", Park::LOAN_STEP),
+            Self::Repay => format!("Pay {} off the loan", Park::LOAN_STEP),
+            Self::Advertise => format!("Advertise the park ({})", Campaign::COST),
             Self::Buy(kind) => format!(
                 "Buy a {} ({}, {} by {})",
                 kind.name().to_lowercase(),
