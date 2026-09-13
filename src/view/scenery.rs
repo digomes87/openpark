@@ -102,7 +102,7 @@ mod tests {
     fn everything_planted_is_a_stem_and_a_crown() {
         let (mut park, camera) = fixture();
         for (at, scenery) in Scenery::ALL.into_iter().enumerate() {
-            #[allow(clippy::cast_possible_wrap)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             let tile = TilePos::new(12 + at as i32, 13);
             park.plant(tile, scenery).expect("it should plant");
         }

@@ -91,7 +91,11 @@ impl Park {
             + looks * Rating::LOOKS_ARE_WORTH
             + felt * Rating::MOOD_IS_WORTH;
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
         let rating = (score.clamp(0.0, 1.0) * Rating::BEST as f32) as u32;
 
         Rating {
@@ -193,6 +197,10 @@ impl Park {
 
 #[cfg(test)]
 mod tests {
+    // The shares below are compared against the exact ends of their range,
+    // which are set by a clamp rather than arrived at by arithmetic.
+    #![allow(clippy::float_cmp)]
+
     use super::*;
 
     use crate::park::fixtures::park_with_a_coaster;
