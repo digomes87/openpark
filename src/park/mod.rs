@@ -10,6 +10,7 @@ mod fixtures;
 mod guest;
 mod land;
 mod needs;
+mod queue;
 mod ride;
 mod shop;
 mod staff;
@@ -21,6 +22,7 @@ pub use facility::Facility;
 pub use guest::{Guest, Plan};
 pub use land::Land;
 pub use needs::Needs;
+pub use queue::Queue;
 pub use ride::{Ride, RideState, RideStats, TestFailure, Train};
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
@@ -137,6 +139,18 @@ impl Park {
 
     /// How much mood a guest loses per tick of standing on worn-out ground.
     const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
+
+    /// How much faster somebody shuffling up a queue moves than somebody
+    /// walking across the park.
+    ///
+    /// A queue that advances at strolling pace empties a train's worth of seats
+    /// slower than the train can carry them, so the ride spends its day
+    /// half-full with a line out of the gate. Three tiles for every one is what
+    /// it takes for eight seats to fill inside one dwell.
+    const QUEUE_SHUFFLE: f32 = 6.0;
+
+    /// How much mood a guest loses for standing in a line and giving up on it.
+    const GAVE_UP_QUEUEING: f32 = 0.15;
 
     /// How much mood a guest gains per tick of walking near an entertainer.
     const ENTERTAINED: f32 = 1.0 / 1_500.0;

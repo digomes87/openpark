@@ -67,7 +67,7 @@ openpark — a park simulator
                         tools to it
     --tool NAME         inspect, stall, bench, demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
-                        dig, path, grass, dirt or water
+                        dig, path, queue, grass, dirt or water
     -h, --help          print this
 ";
 
@@ -189,6 +189,7 @@ fn tool(value: &str) -> Result<Tool> {
         "raise" => Ok(Tool::Raise),
         "dig" => Ok(Tool::Lower),
         "path" => Ok(Tool::Lay(Terrain::Path)),
+        "queue" => Ok(Tool::Lay(Terrain::Queue)),
         "grass" => Ok(Tool::Lay(Terrain::Grass)),
         "dirt" => Ok(Tool::Lay(Terrain::Dirt)),
         "water" => Ok(Tool::Lay(Terrain::Water)),

@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 use serde::{Deserialize, Serialize};
 
-use crate::park::{Money, Track, TrackPiece};
+use crate::park::{Money, Queue, Track, TrackPiece};
 
 /// How much speed a train gains each tick while dropping a step per tile.
 ///
@@ -264,6 +264,8 @@ pub struct Ride {
     takings: Money,
     /// How worn it is, from 0 (new) to 1 (about to fail).
     wear: f32,
+    /// Who is waiting for it.
+    queue: Queue,
 }
 
 impl Ride {
@@ -280,7 +282,11 @@ impl Ride {
     pub const SEATS: u32 = 8;
 
     /// How long a train stands in the station, loading.
-    pub const DWELL: u32 = 120;
+    ///
+    /// Long enough for a full line to file aboard one at a time: eight seats at
+    /// a tile of shuffling each. A shorter dwell is not a busier ride, it is a
+    /// ride that leaves half empty.
+    pub const DWELL: u32 = 240;
 
     /// How many ticks a test run is given to come back round.
     ///
@@ -307,6 +313,7 @@ impl Ride {
             riders: 0,
             takings: 0,
             wear: 0.0,
+            queue: Queue::new(),
         }
     }
 
@@ -390,6 +397,16 @@ impl Ride {
     /// How worn it is, from 0 to 1.
     pub const fn wear(&self) -> f32 {
         self.wear
+    }
+
+    /// The line waiting for it.
+    pub const fn queue(&self) -> &Queue {
+        &self.queue
+    }
+
+    /// The line waiting for it, to join or leave.
+    pub fn queue_mut(&mut self) -> &mut Queue {
+        &mut self.queue
     }
 
     /// What it costs to keep in service for one wage bill.
@@ -512,17 +529,26 @@ impl Ride {
         Ok(())
     }
 
-    /// Shuts the ride without taking anything down.
-    pub const fn close(&mut self) {
+    /// Shuts the ride without taking anything down, and sends the line away.
+    ///
+    /// Returns whoever was waiting, so the park can put them back on their feet:
+    /// a queue for something that is not running is a queue nobody should be
+    /// standing in.
+    pub fn close(&mut self) -> Vec<u32> {
         self.state = RideState::Closed;
+        self.queue.send_everybody_away()
     }
 
     /// Breaks the ride down, stopping every train where it stands.
-    pub fn break_down(&mut self) {
+    ///
+    /// Returns whoever was in the line, for the same reason [`Ride::close`]
+    /// does.
+    pub fn break_down(&mut self) -> Vec<u32> {
         self.state = RideState::Broken;
         for train in &mut self.trains {
             train.speed = 0.0;
         }
+        self.queue.send_everybody_away()
     }
 
     /// Puts a broken ride back together, as good as half new.

@@ -27,6 +27,7 @@ src/
 │   ├── build.rs       changing the park: what it costs and why it is refused
 │   ├── books.rs       the money: wages, upkeep, and running out of it
 │   ├── crowd.rs       how the crowd finds its way about
+│   ├── queue.rs       the line for a ride: an order, and where it stands
 │   ├── terrain.rs     Terrain: what the ground is and what it costs to cross
 │   ├── land.rs        Land: the two grids of ground and height, and its rules
 │   ├── facility.rs    Facility: what a kind of stall or bench is like

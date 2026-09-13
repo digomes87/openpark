@@ -14,6 +14,9 @@ pub enum Terrain {
     Grass,
     /// A laid footpath. Where guests actually want to walk.
     Path,
+    /// Queue path: a footpath that only leads to a ride, and that guests stand
+    /// in line on rather than walk along.
+    Queue,
     /// Bare earth, usually where something was demolished.
     Dirt,
     /// Water. Not walkable, not buildable without work.
@@ -26,7 +29,13 @@ impl Terrain {
     /// Everything a player can lay down, in the order a toolbar would list it.
     ///
     /// Rock is not on it: a park can quarry its way around one, never make one.
-    pub const LAYABLE: [Self; 4] = [Self::Path, Self::Grass, Self::Dirt, Self::Water];
+    pub const LAYABLE: [Self; 5] = [
+        Self::Path,
+        Self::Queue,
+        Self::Grass,
+        Self::Dirt,
+        Self::Water,
+    ];
 
     /// What it costs the park to lay one tile of this, or `None` for something
     /// no amount of money will buy.
@@ -39,6 +48,7 @@ impl Terrain {
     pub const fn lay_cost(self) -> Option<crate::park::Money> {
         match self {
             Self::Path => Some(25),
+            Self::Queue => Some(30),
             Self::Grass => Some(10),
             Self::Dirt => Some(5),
             Self::Water => Some(50),
@@ -51,6 +61,7 @@ impl Terrain {
         match self {
             Self::Grass => "Grass",
             Self::Path => "Path",
+            Self::Queue => "Queue path",
             Self::Dirt => "Dirt",
             Self::Water => "Water",
             Self::Rock => "Rock",
@@ -65,7 +76,7 @@ impl Terrain {
     /// assert!(!Terrain::Water.is_walkable());
     /// ```
     pub const fn is_walkable(self) -> bool {
-        matches!(self, Self::Grass | Self::Path | Self::Dirt)
+        matches!(self, Self::Grass | Self::Path | Self::Dirt | Self::Queue)
     }
 
     /// Whether something can be built here without terraforming first.
@@ -85,7 +96,10 @@ impl Terrain {
     /// ```
     pub const fn walk_cost(self) -> Option<u32> {
         match self {
-            Self::Path => Some(1),
+            // A queue is a path with a line standing on it: as easy to walk,
+            // and no more inviting, so a crowd with somewhere else to be does
+            // not cut through one.
+            Self::Path | Self::Queue => Some(1),
             Self::Dirt => Some(4),
             Self::Grass => Some(6),
             Self::Water | Self::Rock => None,
@@ -101,6 +115,7 @@ impl Terrain {
         match self {
             Self::Grass => Color::hex(0x5E_8C_3E),
             Self::Path => Color::hex(0xC9_B6_92),
+            Self::Queue => Color::hex(0xB0_9A_C2),
             Self::Dirt => Color::hex(0x8B_6F_4E),
             Self::Water => Color::hex(0x3E_6E_8C),
             Self::Rock => Color::hex(0x6B_6B_6B),

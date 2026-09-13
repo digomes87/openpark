@@ -81,6 +81,7 @@ impl Tool {
             Self::Raise,
             Self::Lower,
             Self::Lay(Terrain::Path),
+            Self::Lay(Terrain::Queue),
             Self::Lay(Terrain::Grass),
             Self::Lay(Terrain::Dirt),
             Self::Lay(Terrain::Water),

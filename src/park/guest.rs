@@ -36,8 +36,12 @@ pub enum Plan {
     Visiting { facility: TilePos },
     /// Standing at `facility`, busy until `until`.
     Using { facility: TilePos, until: Tick },
-    /// On the way to ride `ride`, which it will board from beside `station`.
-    Queueing { ride: u32, station: TilePos },
+    /// Waiting for `ride`, in the line that leads to `station`, since `since`.
+    Queueing {
+        ride: u32,
+        station: TilePos,
+        since: Tick,
+    },
     /// Aboard `ride`, and out of the park's way until it comes back round.
     Riding { ride: u32 },
     /// On the way to the gate, and out of the park once it gets there.
@@ -203,6 +207,14 @@ impl Guest {
     /// What the guest is trying to do.
     pub const fn plan(&self) -> Plan {
         self.plan
+    }
+
+    /// The ride the guest is queueing for, and how long it has been waiting.
+    pub const fn queueing_for(&self) -> Option<(u32, Tick)> {
+        match self.plan {
+            Plan::Queueing { ride, since, .. } => Some((ride, since)),
+            _ => None,
+        }
     }
 
     /// Whether the guest is on its way out.
@@ -429,6 +441,14 @@ impl Guest {
         self.walk
             .follow(route)
             .with_context(|| format!("guest {} cannot follow that route", self.id))
+    }
+
+    /// Stops where it is, dropping whatever route it was following.
+    ///
+    /// What joining a queue does: a guest that keeps walking the route it took
+    /// to get to the line walks straight past its place in it.
+    pub fn stop(&mut self) {
+        self.walk.stop();
     }
 
     /// Walks `distance` tiles along the route, stopping at the end of it.
