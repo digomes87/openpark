@@ -19,7 +19,7 @@ use crate::park::Park;
 pub struct Objective {
     /// How many guests have to be in the park at once.
     pub guests: usize,
-    /// What the park has to be rated, out of [`Rating::BEST`].
+    /// What the park has to be rated, out of [`crate::park::Rating::BEST`].
     pub rating: u32,
     /// The tick by which both have to be true.
     pub by: Tick,
