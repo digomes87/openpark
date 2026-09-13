@@ -83,12 +83,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   of fills at a guest every 90 ticks, one everybody is talking about at one every
   22.
 
+- Flat rides: a carousel, a ferris wheel, a haunted house and teacups, on
+  toolbar 0. `Ride` now holds a `Layout` — track with trains, or a machine on its
+  own square of land — so both kinds queue, price, wear out and break down the
+  same way.
+- Guests have a nerve as well as a wallet, and refuse anything rougher than they
+  are brave. `RideStats::category` calls a ride gentle, thrill or extreme.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and
   `Park::demolish` returns the `Shop` that was standing there.
 - `Guest::enjoy` takes the `Shop` being used rather than a `Facility`, so it pays
   the price on that shop's board.
+- `Ride::track` returns an `Option`, since a flat ride has none, and
+  `Ride::tiles` / `Ride::stations` answer for both kinds.
 - Walking is shared: `Walk` holds the route and the position for both guests and
   staff, and `Guest` delegates to it.
 - `Park` holds a `Land` rather than a bare terrain grid; `Park::terrain` still

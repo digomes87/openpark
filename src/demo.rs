@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::{Heading, Park, Scenery, Terrain, TrackPiece};
+use crate::park::{FlatRide, Heading, Park, Scenery, Terrain, TrackPiece};
 
 /// How far out from the crossroads the coaster is laid.
 const OFFSET: i32 = 2;
@@ -70,7 +70,8 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     }
 
     queue_for(park, id).context("the demo coaster has nowhere to queue")?;
-    plant_around(park).context("the demo park has nowhere to plant")?;
+    plant_around(park);
+    buy_something_gentle(park);
 
     park.test_ride(id).context("the demo coaster stalls")?;
     park.open_ride(id)
@@ -79,16 +80,46 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     Ok(id)
 }
 
+/// Buys a carousel for the guests who will not go near the coaster.
+///
+/// Whichever level square beside the crossroads will take it; a demo park with
+/// no room for one simply does without, because this is a picture rather than a
+/// plan.
+fn buy_something_gentle(park: &mut Park) {
+    #[allow(clippy::cast_possible_wrap)]
+    let middle = park.height() as i32 / 2;
+
+    // Searched outwards from the gate rather than from the corner of the map:
+    // a demo park with its carousel in the far paddock is a picture of nothing.
+    #[allow(clippy::cast_possible_wrap)]
+    let gate = park.entrance().x;
+
+    for step in 0..park.width() as i32 {
+        for away in [-step, step] {
+            let corner = TilePos::new(gate + away - 3, middle + 2);
+            if !park.can_buy_a_ride(corner, FlatRide::Carousel) {
+                continue;
+            }
+            if park
+                .buy_a_ride("The Carousel", FlatRide::Carousel, corner)
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+}
+
 /// Plants a row of scenery along the crossroads, where the crowd walks.
 ///
 /// Where it is looked at, in other words: the rating counts beauty around paths
 /// rather than beauty anywhere, so scenery in the corner of the map would be a
 /// picture of the feature not working.
 ///
-/// # Errors
-///
-/// Fails if the ground beside the paths will not take it.
-fn plant_around(park: &mut Park) -> Result<()> {
+/// Whatever lands in the lake or under the coaster is simply skipped: this is
+/// decoration, and a demo park that refused to build because one flowerbed had
+/// nowhere to go would be no demo at all.
+fn plant_around(park: &mut Park) {
     #[allow(clippy::cast_possible_wrap)]
     let middle = park.height() as i32 / 2;
 
@@ -110,8 +141,6 @@ fn plant_around(park: &mut Park) -> Result<()> {
             let _ = park.plant(tile, planted);
         }
     }
-
-    Ok(())
 }
 
 /// Lays a queue path leading away from a ride's station.
@@ -128,7 +157,6 @@ fn queue_for(park: &mut Park, ride: u32) -> Result<()> {
     let station = *park
         .ride(ride)
         .context("there is no such ride")?
-        .track()
         .stations()
         .first()
         .context("the ride has no station")?;
@@ -177,12 +205,19 @@ mod tests {
         let ride = park.ride(id).expect("it should be there");
 
         assert_eq!(ride.state(), RideState::Open);
-        assert!(ride.track().is_a_circuit());
-        assert_eq!(ride.track().stations().len(), 1);
+        assert!(ride
+            .track()
+            .expect("the demo ride is a coaster")
+            .is_a_circuit());
+        assert_eq!(ride.stations().len(), 1);
 
         let stats = ride.stats().expect("it was tested");
         assert!(stats.excitement > 0.0, "it is not a coaster if it is dull");
-        assert_eq!(ride.track().longest_drop(), 2, "two drops in a row");
+        assert_eq!(
+            ride.track().expect("a coaster").longest_drop(),
+            2,
+            "two drops in a row"
+        );
 
         let queue = park
             .terrain()
@@ -193,6 +228,20 @@ mod tests {
             queue >= 3,
             "the demo ride has nowhere to queue: {queue} tiles"
         );
+    }
+
+    #[test]
+    fn the_demo_park_has_something_gentle_as_well() {
+        let mut park = Park::new("Demo", 48, 48, 5).unwrap();
+        park.adjust_cash(50_000);
+        coaster(&mut park).expect("the demo park should build");
+
+        let gentle = park
+            .rides()
+            .iter()
+            .filter(|ride| ride.flat().is_some())
+            .count();
+        assert_eq!(gentle, 1, "there is nothing here for the timid");
     }
 
     #[test]

@@ -173,13 +173,14 @@ impl OpenPark {
             self.select(self.tool.next());
         }
 
-        // The number row picks a toolbar; 1 is the first, so the key is one
-        // ahead of the index.
-        for number in 1..=Tool::KITS.len() {
+        // The number row picks a toolbar. 1 is the first, so the key is one
+        // ahead of the index — and the tenth toolbar is on 0, where the row
+        // runs out of digits and starts again.
+        for kit in 0..Tool::KITS.len() {
             #[allow(clippy::cast_possible_truncation)]
-            let key = Key::digit(number as u8);
+            let key = Key::digit(((kit + 1) % 10) as u8);
             if key.is_some_and(|key| input.key_pressed(key)) {
-                if let Some(tool) = Tool::from_kit(number - 1) {
+                if let Some(tool) = Tool::from_kit(kit) {
                     self.select(tool);
                 }
             }
@@ -320,6 +321,13 @@ impl OpenPark {
             Tool::OpenRide => Some(self.open_the_ride(tile)),
             Tool::CloseRide => Some(self.close_the_ride(tile)),
             Tool::DemolishRide => Some(self.demolish_the_ride(tile)),
+            Tool::Buy(kind) => Some({
+                let name = format!("{} {}", kind.name(), self.park.rides().len() + 1);
+                match self.park.buy_a_ride(name, kind, tile) {
+                    Ok(_) => format!("Bought a {}", kind.name().to_lowercase()),
+                    Err(refused) => refused.to_string(),
+                }
+            }),
             Tool::Plant(scenery) => Some(match self.park.plant(tile, scenery) {
                 Ok(()) => format!("Planted a {}", scenery.name().to_lowercase()),
                 Err(refused) => refused.to_string(),
@@ -649,19 +657,30 @@ mod tests {
     fn the_number_row_picks_a_toolbar() {
         let mut game = game();
 
-        for number in 1..=Tool::KITS.len() {
+        for kit in 0..Tool::KITS.len() {
+            // The row runs 1 to 9 and then round to 0, so the tenth toolbar is
+            // the one on the key the row starts again with.
             #[allow(clippy::cast_possible_truncation)]
-            let key = Key::digit(number as u8).expect("there are fewer than ten toolbars");
+            let key = Key::digit(((kit + 1) % 10) as u8).expect("ten keys on the row");
             frame(&mut game, ScreenPoint::ZERO, |input| {
                 input.press_key(key);
             });
 
             assert_eq!(
                 game.tool(),
-                Tool::from_kit(number - 1).expect("every toolbar has a tool"),
-                "key {number} picked the wrong toolbar"
+                Tool::from_kit(kit).expect("every toolbar has a tool"),
+                "the key for toolbar {kit} picked the wrong one"
             );
         }
+    }
+
+    #[test]
+    fn there_are_no_more_toolbars_than_the_number_row_has_keys() {
+        assert!(
+            Tool::KITS.len() <= 10,
+            "{} toolbars and ten keys to pick them with",
+            Tool::KITS.len()
+        );
     }
 
     #[test]

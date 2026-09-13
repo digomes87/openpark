@@ -130,7 +130,7 @@ impl Park {
 
             // Only from a tile the line actually stands on: a queue is joined
             // at the back, not barged into from the side.
-            let line = queue::line_from(&self.land, station);
+            let line = queue::line_from(&self.land, station, |tile| self.is_standing_room(tile));
             if !line.contains(&self.guests[index].tile()) {
                 continue;
             }
@@ -155,11 +155,11 @@ impl Park {
     /// the front of it boards.
     fn shuffle_the_queues(&mut self) {
         for at in 0..self.rides.len() {
-            let Some(station) = self.rides[at].track().stations().first().copied() else {
+            let Some(station) = self.rides[at].stations().first().copied() else {
                 continue;
             };
 
-            let line = queue::line_from(&self.land, station);
+            let line = queue::line_from(&self.land, station, |tile| self.is_standing_room(tile));
             if line.is_empty() {
                 continue;
             }
@@ -197,10 +197,10 @@ impl Park {
         let mut fares = 0;
 
         for at in 0..self.rides.len() {
-            let Some(station) = self.rides[at].track().stations().first().copied() else {
+            let Some(station) = self.rides[at].stations().first().copied() else {
                 continue;
             };
-            let line = queue::line_from(&self.land, station);
+            let line = queue::line_from(&self.land, station, |tile| self.is_standing_room(tile));
             let Some(front_tile) = line.first().copied() else {
                 continue;
             };
@@ -414,7 +414,6 @@ impl Park {
         let broken = self.rides.iter().position(|ride| {
             ride.state() == RideState::Broken
                 && ride
-                    .track()
                     .tiles()
                     .iter()
                     .any(|tile| at.manhattan_distance(*tile) <= reach)
@@ -481,7 +480,14 @@ impl Park {
         let shirt = self.rng.next_u32() as u8;
         let (least, most) = Self::SPENDING_MONEY;
         let money = Money::from(self.rng.range(least, most));
-        let guest = Guest::arriving(self.next_guest_id, self.entrance(), shirt, money);
+        let (timid, fearless) = Guest::NERVE;
+        let nerve = timid + self.rng.next_f32() * (fearless - timid);
+        let (least, most) = Guest::TOLERANCE;
+        let tolerance = least + self.rng.next_f32() * (most - least);
+
+        let guest = Guest::arriving(self.next_guest_id, self.entrance(), shirt, money)
+            .with_nerve(nerve)
+            .with_tolerance(tolerance);
 
         self.next_guest_id = self.next_guest_id.wrapping_add(1);
         self.guests.push(guest);
@@ -794,7 +800,7 @@ mod tests {
     /// standing along.
     fn park_with_a_queue() -> (Park, u32, Vec<TilePos>) {
         let (mut park, id) = park_with_a_coaster();
-        let station = park.ride(id).unwrap().track().stations()[0];
+        let station = park.ride(id).unwrap().stations()[0];
 
         // A straight run of queue path leading away from the station, in
         // whichever direction has the most room: the obvious neighbour heads
@@ -832,7 +838,7 @@ mod tests {
             "the test needs a queue to stand in: laid {laid:?} from {station:?}"
         );
 
-        let line = queue::line_from(park.land(), station);
+        let line = queue::line_from(park.land(), station, |tile| park.is_standing_room(tile));
         (park, id, line)
     }
 

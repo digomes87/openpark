@@ -15,7 +15,7 @@ use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 use serde::{Deserialize, Serialize};
 
-use crate::park::{Money, Queue, Track, TrackPiece};
+use crate::park::{FlatRide, Money, Queue, Track, TrackPiece};
 
 /// How much speed a train gains each tick while dropping a step per tile.
 ///
@@ -201,6 +201,64 @@ pub struct RideStats {
     pub lap: u32,
 }
 
+/// What sort of ride something turned out to be.
+///
+/// Taken off the intensity rather than chosen: a carousel is gentle because it
+/// is gentle, and a layout built out of nothing but drops is extreme whatever
+/// its owner meant it to be.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Category {
+    /// Anybody will go on it.
+    Gentle,
+    /// Most people will.
+    Thrill,
+    /// Only the brave.
+    Extreme,
+}
+
+impl Category {
+    /// What to call it in the HUD.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Gentle => "gentle",
+            Self::Thrill => "thrill",
+            Self::Extreme => "extreme",
+        }
+    }
+}
+
+impl RideStats {
+    /// The intensity above which a ride stops being one for everybody.
+    const A_BIT_MUCH: f32 = 0.25;
+
+    /// The intensity above which most of the crowd will not go near it.
+    const FRIGHTENING: f32 = 0.6;
+
+    /// What sort of ride this is.
+    ///
+    /// ```
+    /// # use openpark::park::{Category, FlatRide, Park};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// park.adjust_cash(5_000);
+    ///
+    /// let id = park.buy_a_ride("Merry Go Round", FlatRide::Carousel, TilePos::new(4, 4))?;
+    /// let stats = park.ride(id).and_then(|ride| ride.stats()).expect("it was tested");
+    /// assert_eq!(stats.category(), Category::Gentle);
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn category(self) -> Category {
+        if self.intensity >= Self::FRIGHTENING {
+            Category::Extreme
+        } else if self.intensity >= Self::A_BIT_MUCH {
+            Category::Thrill
+        } else {
+            Category::Gentle
+        }
+    }
+}
+
 /// Why a layout could not be sent round.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestFailure {
@@ -248,12 +306,83 @@ pub enum RideState {
     Broken,
 }
 
+/// What a ride is made of.
+///
+/// Either a layout somebody built, which has to be tested before it can be
+/// trusted, or a machine somebody bought, which does not.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Layout {
+    /// Track, laid a piece at a time, with trains on it.
+    Coaster(Track),
+    /// A flat ride standing on its own square of land.
+    Flat {
+        /// Which machine it is.
+        kind: FlatRide,
+        /// The corner of its footprint, and the tile guests board from.
+        at: TilePos,
+        /// Ticks left of the go that is running, or zero while it is loading.
+        turning: u32,
+    },
+}
+
+impl Layout {
+    /// Every tile it stands on.
+    pub fn tiles(&self) -> Vec<TilePos> {
+        match self {
+            Self::Coaster(track) => track.tiles(),
+            Self::Flat { kind, at, .. } => {
+                #[allow(clippy::cast_possible_wrap)]
+                let side = kind.footprint() as i32;
+                (0..side)
+                    .flat_map(|dy| (0..side).map(move |dx| (dx, dy)))
+                    .map(|(dx, dy)| at.offset(dx, dy))
+                    .collect()
+            }
+        }
+    }
+
+    /// The tiles guests board from.
+    pub fn stations(&self) -> Vec<TilePos> {
+        match self {
+            Self::Coaster(track) => track.stations(),
+            // The corner it was placed on: a flat ride is entered from the side
+            // it was put down on, which is the one the player pointed at.
+            Self::Flat { at, .. } => vec![*at],
+        }
+    }
+
+    /// What it cost to build or to buy.
+    pub fn cost(&self) -> Money {
+        match self {
+            Self::Coaster(track) => track.cost(),
+            Self::Flat { kind, .. } => kind.cost(),
+        }
+    }
+
+    /// What it costs to keep in service for one wage bill.
+    pub fn upkeep(&self) -> Money {
+        match self {
+            Self::Coaster(track) => track.upkeep(),
+            Self::Flat { kind, .. } => kind.upkeep(),
+        }
+    }
+
+    /// How many guests it takes at once.
+    pub fn seats(&self) -> u32 {
+        match self {
+            Self::Coaster(_) => Ride::SEATS,
+            Self::Flat { kind, .. } => kind.seats(),
+        }
+    }
+}
+
 /// One ride.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Ride {
     id: u32,
     name: String,
-    track: Track,
+    layout: Layout,
     trains: Vec<Train>,
     price: Money,
     state: RideState,
@@ -266,11 +395,23 @@ pub struct Ride {
     wear: f32,
     /// Who is waiting for it.
     queue: Queue,
+    /// How many guests are aboard a flat ride. Trains keep their own count.
+    aboard: u32,
+    /// How long a flat ride has been standing with its doors open.
+    waiting_to_start: u32,
 }
 
 impl Ride {
     /// What a new ride charges until its owner says otherwise.
     pub const DEFAULT_PRICE: Money = 15;
+
+    /// What the most exciting ride imaginable could charge and still be worth
+    /// it.
+    ///
+    /// A little under what a guest would pay at the very outside — see
+    /// `Guest::WORTH_OF_A_THRILL` — because a ride priced at exactly what the
+    /// keenest guest would pay is a ride only the keenest guest goes on.
+    const WORTH_OF_A_GO: Money = 30;
 
     /// The most anything can charge for a ride.
     pub const MAX_PRICE: Money = 100;
@@ -300,12 +441,39 @@ impl Ride {
     /// How much wear one lap adds to a gentle ride.
     const WEAR_PER_LAP: f32 = 0.004;
 
-    /// A ride with a name and somewhere to start laying track.
+    /// A coaster with a name and somewhere to start laying track.
     pub fn new(id: u32, name: impl Into<String>, track: Track) -> Self {
+        Self::of(id, name, Layout::Coaster(track))
+    }
+
+    /// A flat ride standing with its corner on `at`.
+    ///
+    /// Priced at what it is worth rather than at the house default: a carousel
+    /// opened at a coaster's price is a carousel nobody rides, and the owner
+    /// would have no way of knowing why.
+    pub fn bought(id: u32, name: impl Into<String>, kind: FlatRide, at: TilePos) -> Self {
+        let mut ride = Self::of(
+            id,
+            name,
+            Layout::Flat {
+                kind,
+                at,
+                turning: 0,
+            },
+        );
+
+        #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+        let worth = (kind.excitement() * Self::WORTH_OF_A_GO as f32) as Money;
+        ride.set_price(worth.max(1));
+        ride
+    }
+
+    /// A ride of whatever `layout` says it is.
+    fn of(id: u32, name: impl Into<String>, layout: Layout) -> Self {
         Self {
             id,
             name: name.into(),
-            track,
+            layout,
             trains: Vec::new(),
             price: Self::DEFAULT_PRICE,
             state: RideState::Building,
@@ -314,6 +482,8 @@ impl Ride {
             takings: 0,
             wear: 0.0,
             queue: Queue::new(),
+            aboard: 0,
+            waiting_to_start: 0,
         }
     }
 
@@ -327,20 +497,59 @@ impl Ride {
         &self.name
     }
 
-    /// Its layout.
-    pub const fn track(&self) -> &Track {
-        &self.track
+    /// What it is made of.
+    pub const fn layout(&self) -> &Layout {
+        &self.layout
     }
 
-    /// Its layout, to lay more track on.
+    /// Its track, if it has any.
+    pub const fn track(&self) -> Option<&Track> {
+        match &self.layout {
+            Layout::Coaster(track) => Some(track),
+            Layout::Flat { .. } => None,
+        }
+    }
+
+    /// Which machine it is, if it is one rather than a layout.
+    pub const fn flat(&self) -> Option<FlatRide> {
+        match &self.layout {
+            Layout::Flat { kind, .. } => Some(*kind),
+            Layout::Coaster(_) => None,
+        }
+    }
+
+    /// Every tile it stands on.
+    pub fn tiles(&self) -> Vec<TilePos> {
+        self.layout.tiles()
+    }
+
+    /// The tiles guests board from.
+    pub fn stations(&self) -> Vec<TilePos> {
+        self.layout.stations()
+    }
+
+    /// Whether any part of it stands on `tile`.
+    pub fn occupies(&self, tile: TilePos) -> bool {
+        match &self.layout {
+            Layout::Coaster(track) => track.occupies(tile),
+            Layout::Flat { .. } => self.layout.tiles().contains(&tile),
+        }
+    }
+
+    /// Its track, to lay more of it on.
     ///
     /// Changing the track un-tests the ride: whatever it was measured at no
-    /// longer describes what is on the ground.
-    pub fn track_mut(&mut self) -> &mut Track {
+    /// longer describes what is on the ground. `None` for a ride that has no
+    /// track to change.
+    pub fn track_mut(&mut self) -> Option<&mut Track> {
         self.stats = None;
         self.state = RideState::Building;
         self.trains.clear();
-        &mut self.track
+
+        match &mut self.layout {
+            Layout::Coaster(track) => Some(track),
+            Layout::Flat { .. } => None,
+        }
     }
 
     /// The trains on it.
@@ -411,7 +620,7 @@ impl Ride {
 
     /// What it costs to keep in service for one wage bill.
     pub fn upkeep(&self) -> Money {
-        self.track.upkeep()
+        self.layout.upkeep()
     }
 
     /// Sends a test train round the layout, and records what it found.
@@ -443,12 +652,32 @@ impl Ride {
     /// # Ok::<(), anyhow::Error>(())
     /// ```
     pub fn test(&mut self) -> Result<RideStats, TestFailure> {
-        if self.track.stations().is_empty() {
+        // A machine that was bought has nothing to get wrong: what it is like
+        // was decided by whoever made it.
+        if let Layout::Flat { kind, .. } = self.layout {
+            let stats = RideStats {
+                excitement: kind.excitement(),
+                intensity: kind.intensity(),
+                top_speed: 0.0,
+                lap: kind.ride_time(),
+            };
+
+            self.stats = Some(stats);
+            self.state = RideState::Closed;
+            return Ok(stats);
+        }
+
+        let Layout::Coaster(track) = &self.layout else {
+            unreachable!("a layout is either a coaster or a flat ride");
+        };
+
+        if track.stations().is_empty() {
             return Err(TestFailure::NoStation);
         }
-        if !self.track.is_a_circuit() {
+        if !track.is_a_circuit() {
             return Err(TestFailure::NotACircuit);
         }
+        let track = track.clone();
 
         let mut train = Train::waiting();
         train.speed = Train::DISPATCH_SPEED;
@@ -457,7 +686,7 @@ impl Ride {
         let mut lap = 0;
         while lap < Self::TEST_PATIENCE {
             lap += 1;
-            let lapped = train.advance(&self.track);
+            let lapped = train.advance(&track);
             top_speed = top_speed.max(train.speed);
 
             if train.speed <= 0.0 {
@@ -481,11 +710,16 @@ impl Ride {
     /// intensity and no excitement is a fairground ride nobody queues twice
     /// for, which is what the subtraction at the end is about.
     fn measure(&self, top_speed: f32, lap: u32) -> RideStats {
-        let drop = f32::from(self.track.longest_drop());
+        let track = match &self.layout {
+            Layout::Coaster(track) => track,
+            Layout::Flat { .. } => unreachable!("a flat ride is never measured"),
+        };
+
+        let drop = f32::from(track.longest_drop());
         #[allow(clippy::cast_precision_loss)]
-        let turns = self.track.curves() as f32;
+        let turns = track.curves() as f32;
         #[allow(clippy::cast_precision_loss)]
-        let length = self.track.len() as f32;
+        let length = track.len() as f32;
 
         let intensity = (top_speed / Train::TOP_SPEED * 0.6 + drop / 8.0 * 0.4).clamp(0.0, 1.0);
         let excitement = (0.15
@@ -519,7 +753,7 @@ impl Ride {
             self.name,
         );
 
-        if self.trains.is_empty() {
+        if self.track().is_some() && self.trains.is_empty() {
             let mut train = Train::waiting();
             train.load(0, Self::DWELL);
             self.trains.push(train);
@@ -569,18 +803,29 @@ impl Ride {
             return None;
         }
 
-        let seats_left = self
-            .trains
-            .iter()
-            .filter(|train| train.is_loading())
-            .map(|train| Self::SEATS.saturating_sub(train.riders()))
-            .max()?;
+        let seats_left = match &self.layout {
+            Layout::Coaster(_) => self
+                .trains
+                .iter()
+                .filter(|train| train.is_loading())
+                .map(|train| Self::SEATS.saturating_sub(train.riders()))
+                .max()?,
+            // A flat ride loads while it is standing still and takes nobody
+            // once it has started turning.
+            Layout::Flat { kind, turning, .. } => {
+                if *turning > 0 {
+                    return None;
+                }
+                kind.seats().saturating_sub(self.aboard)
+            }
+        };
+
         if seats_left == 0 {
             return None;
         }
 
         Some(TileBoarding {
-            station: *self.track.stations().first()?,
+            station: *self.stations().first()?,
             seats_left,
         })
     }
@@ -590,13 +835,24 @@ impl Ride {
     /// Returns what they were charged, or `None` if there was no room after
     /// all.
     pub fn board_one(&mut self) -> Option<Money> {
-        let train = self
-            .trains
-            .iter_mut()
-            .filter(|train| train.is_loading() && train.riders() < Self::SEATS)
-            .max_by_key(|train| Self::SEATS - train.riders())?;
+        match &mut self.layout {
+            Layout::Coaster(_) => {
+                let train = self
+                    .trains
+                    .iter_mut()
+                    .filter(|train| train.is_loading() && train.riders() < Self::SEATS)
+                    .max_by_key(|train| Self::SEATS - train.riders())?;
 
-        train.riders += 1;
+                train.riders += 1;
+            }
+            Layout::Flat { kind, turning, .. } => {
+                if *turning > 0 || self.aboard >= kind.seats() {
+                    return None;
+                }
+                self.aboard += 1;
+            }
+        }
+
         self.riders = self.riders.saturating_add(1);
         self.takings = self.takings.saturating_add(self.price);
         Some(self.price)
@@ -614,10 +870,45 @@ impl Ride {
         let intensity = self.stats.map_or(0.0, |stats| stats.intensity);
         let mut got_off = 0;
 
+        // A flat ride is a cycle rather than a circuit: it loads until it is
+        // full or its patience runs out, turns for a while, and lets everybody
+        // off where they got on.
+        if let Layout::Flat { kind, turning, .. } = &mut self.layout {
+            let kind = *kind;
+            if *turning > 0 {
+                *turning -= 1;
+                if *turning == 0 {
+                    got_off = self.aboard;
+                    self.aboard = 0;
+                    self.wear = (self.wear
+                        + Self::WEAR_PER_LAP * (1.0 + intensity * Self::ROUGHNESS_WEAR))
+                        .clamp(0.0, 1.0);
+                }
+                return got_off;
+            }
+
+            self.waiting_to_start += 1;
+            let full = self.aboard >= kind.seats();
+            if (full || self.waiting_to_start >= Self::DWELL) && self.aboard > 0 {
+                self.waiting_to_start = 0;
+                if let Layout::Flat { turning, .. } = &mut self.layout {
+                    *turning = kind.ride_time();
+                }
+            }
+
+            return 0;
+        }
+
+        // Borrowed from the layout field rather than fetched through a method,
+        // so the trains beside it can still be moved: disjoint fields.
+        let Layout::Coaster(track) = &self.layout else {
+            return got_off;
+        };
+
         for index in 0..self.trains.len() {
             let mut train = self.trains[index];
             let was_loading = train.is_loading();
-            let lapped = train.advance(&self.track);
+            let lapped = train.advance(track);
 
             if lapped {
                 got_off += train.unload();
@@ -859,7 +1150,7 @@ mod tests {
 
         let boarding = ride.boarding().expect("guests should be let on");
         assert_eq!(boarding.seats_left, Ride::SEATS);
-        assert!(ride.track().stations().contains(&boarding.station));
+        assert!(ride.stations().contains(&boarding.station));
     }
 
     #[test]
@@ -868,7 +1159,7 @@ mod tests {
         ride.test().unwrap();
         ride.open().unwrap();
 
-        ride.track_mut().pop();
+        ride.track_mut().expect("a coaster").pop();
         assert_eq!(ride.state(), RideState::Building);
         assert_eq!(ride.stats(), None);
         assert!(ride.trains().is_empty());

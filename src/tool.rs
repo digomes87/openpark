@@ -1,6 +1,6 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece};
+use crate::park::{Facility, FlatRide, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece};
 
 /// The thing the pointer is currently holding.
 ///
@@ -53,6 +53,8 @@ pub enum Tool {
     Plant(Scenery),
     /// Clicking takes it down again.
     Uproot,
+    /// Clicking buys one of these and stands it on the tile under the pointer.
+    Buy(FlatRide),
 }
 
 impl Tool {
@@ -62,7 +64,7 @@ impl Tool {
     /// hand. That is the only arrangement that stays usable as the list grows:
     /// reaching "curve left" by pressing space twenty times is not a toolbar,
     /// which is why the engine grew the number row.
-    pub const KITS: [&'static [Self]; 9] = [
+    pub const KITS: [&'static [Self]; 10] = [
         // 1: look at things.
         &[Self::Inspect],
         // 2: stalls and benches.
@@ -123,6 +125,14 @@ impl Tool {
             Self::Plant(Scenery::Lamp),
             Self::Uproot,
         ],
+        // 0: rides that come as they are. Last on the row and last in the list,
+        // because the number row runs 1 to 9 and then round to 0.
+        &[
+            Self::Buy(FlatRide::Carousel),
+            Self::Buy(FlatRide::FerrisWheel),
+            Self::Buy(FlatRide::HauntedHouse),
+            Self::Buy(FlatRide::TeaCups),
+        ],
     ];
 
     /// Which toolbar this tool is on, counting from zero.
@@ -162,6 +172,14 @@ impl Tool {
         let kit = Self::KITS[self.kit()];
         let at = kit.iter().position(|tool| *tool == self).unwrap_or(0);
         kit[(at + 1) % kit.len()]
+    }
+
+    /// What flat ride it is buying, if it is buying one.
+    pub const fn flat_ride(self) -> Option<FlatRide> {
+        match self {
+            Self::Buy(kind) => Some(kind),
+            _ => None,
+        }
     }
 
     /// What it is planting, if it is planting anything.
@@ -250,6 +268,13 @@ impl Tool {
                 )
             }
             Self::Uproot => "Take the scenery down".to_owned(),
+            Self::Buy(kind) => format!(
+                "Buy a {} ({}, {} by {})",
+                kind.name().to_lowercase(),
+                kind.cost(),
+                kind.footprint(),
+                kind.footprint()
+            ),
         }
     }
 }
@@ -345,6 +370,16 @@ mod tests {
         assert_eq!(Tool::Inspect.terrain(), None);
         assert_eq!(Tool::Raise.terrain(), None);
         assert_eq!(Tool::Lay(Terrain::Path).terrain(), Some(Terrain::Path));
+    }
+
+    #[test]
+    fn every_flat_ride_is_in_the_cycle() {
+        for kind in FlatRide::ALL {
+            assert!(
+                all_tools().contains(&Tool::Buy(kind)),
+                "{kind:?} cannot be bought with the mouse"
+            );
+        }
     }
 
     #[test]
