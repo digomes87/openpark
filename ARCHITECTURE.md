@@ -26,6 +26,8 @@ src/
 │   ├── day.rs         one tick: the gate, the crowd, the trains, the books
 │   ├── build.rs       changing the park: what it costs and why it is refused
 │   ├── books.rs       the money: wages, upkeep, and running out of it
+│   ├── finance.rs     the bank and the billboards: loans and campaigns
+│   ├── goal.rs        what the park is trying to do, and whether it did it
 │   ├── crowd.rs       how the crowd finds its way about
 │   ├── queue.rs       the line for a ride: an order, and where it stands
 │   ├── scenery.rs     things put up to be looked at rather than used

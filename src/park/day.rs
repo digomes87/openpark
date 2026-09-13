@@ -53,12 +53,16 @@ impl Park {
             self.reputation = self.rating().rating;
         }
 
-        if self.tick.is_multiple_of(Self::TICKS_PER_WAGE_BILL) {
+        let billing = self.tick.is_multiple_of(Self::TICKS_PER_WAGE_BILL);
+        self.keep_the_books(billing);
+
+        if billing {
             self.pay_the_bills();
             self.check_solvency();
         }
 
         self.show_out_the_guests();
+        self.check_the_objective();
     }
 
     /// Moves every line along: joins, shuffles forward, boards, and gives up.
@@ -463,7 +467,7 @@ impl Park {
     /// faster. It is the only advertising there is.
     fn how_often_people_turn_up(&self) -> u64 {
         let spread = Self::SLOWEST_ARRIVALS - Self::FASTEST_ARRIVALS;
-        let word_of_mouth = u64::from(self.reputation) * spread / u64::from(Rating::BEST);
+        let word_of_mouth = u64::from(self.regard()) * spread / u64::from(Rating::BEST);
 
         Self::SLOWEST_ARRIVALS.saturating_sub(word_of_mouth)
     }

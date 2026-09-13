@@ -78,6 +78,13 @@ it is what lets a popular ride hold its crowd.
 Rides wear out as they run, and a worn ride breaks down. A mechanic puts it back
 together; a park without one never runs that ride again.
 
+There is a bank, a billboard and something to lose. A loan is capped and charges
+interest every wage bill, so borrowing brings tomorrow's guests forward and costs
+more than it gives back. A marketing campaign lends the park a reputation it has
+not earned, for a while. And a park has an objective — a hundred guests at once
+*and* a rating of 600, by tick 40,000 — which cannot be reached by waiting: a
+field with a path across it fills up too. Going bankrupt loses it on the spot.
+
 All of it saves and loads, dice included.
 
 The land has a shape. A new park is rolling rather than flat, and you can raise
@@ -117,7 +124,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `1` – `9`, `0` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery, flat rides |
+| `1` – `9`, `0` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery, money |
 | `Space` | Walk along the toolbar in hand |
 | Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |

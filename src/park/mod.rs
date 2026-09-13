@@ -5,9 +5,11 @@ mod build;
 mod crowd;
 mod day;
 mod facility;
+mod finance;
 #[cfg(test)]
 mod fixtures;
 mod flat;
+mod goal;
 mod guest;
 mod land;
 mod needs;
@@ -22,7 +24,9 @@ mod track;
 mod walk;
 
 pub use facility::Facility;
+pub use finance::Campaign;
 pub use flat::FlatRide;
+pub use goal::{Objective, Outcome};
 pub use guest::{Guest, Plan};
 pub use land::Land;
 pub use needs::Needs;
@@ -77,6 +81,14 @@ pub struct Park {
     next_ride_id: u32,
     /// When the park ran out of credit, if it has.
     bankrupt_since: Option<Tick>,
+    /// What the park owes the bank.
+    loan: Money,
+    /// The marketing campaign that is running, if one is.
+    campaign: Option<Campaign>,
+    /// What the park has been asked to do.
+    objective: Objective,
+    /// Whether it has managed it.
+    outcome: Outcome,
     /// What people thought of the park when it last asked.
     ///
     /// Cached rather than computed on demand because the gate consults it every
@@ -268,6 +280,10 @@ impl Park {
             next_staff_id: 0,
             next_ride_id: 0,
             bankrupt_since: None,
+            loan: 0,
+            campaign: None,
+            objective: Objective::standard(),
+            outcome: Outcome::Pending,
             reputation: 0,
         };
 
