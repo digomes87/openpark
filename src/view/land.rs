@@ -8,8 +8,8 @@
 //! reads as a solid mass rather than as a diamond floating over its neighbours.
 
 use isogrid::camera::Camera;
-use isogrid::iso::{GridPoint, TilePos};
-use isogrid::render::{Renderer, TileShape};
+use isogrid::iso::{GridPoint, ScreenPoint, TilePos};
+use isogrid::render::{Color, Renderer, TileShape};
 
 use crate::park::{Land, Park};
 
@@ -23,6 +23,11 @@ const DEPTH_SHADE: f32 = 0.15;
 ///
 /// The one light source in the park: tops are lit, faces are not.
 const FACE_SHADE: f32 = 0.5;
+
+/// What rubbish on a tile looks like, and how much of the tile one bit of it
+/// covers.
+const RUBBISH: Color = Color::hex(0x7A_6A_46);
+const RUBBISH_SIZE: f32 = 0.13;
 
 /// How much brighter each step up a hill is drawn.
 ///
@@ -60,6 +65,47 @@ pub fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
         }
 
         canvas.fill_tile(shape(camera, tile, f32::from(top)), colour);
+
+        // Rubbish last, on top of the ground it is lying on: a few small marks
+        // rather than a tint, so a path with one wrapper on it still reads as a
+        // path and one with four does not.
+        let rubbish = park.litter_at(tile);
+        if rubbish > 0 {
+            scatter(canvas, camera, tile, f32::from(top), rubbish);
+        }
+    }
+}
+
+/// Draws `rubbish` bits of litter about the middle of one tile.
+///
+/// Placed from the tile's own coordinates rather than at random, so the mess
+/// stays where it is from one frame to the next and a save reloads the same
+/// park.
+fn scatter(canvas: &mut dyn Renderer, camera: &Camera, tile: TilePos, z: f32, rubbish: u8) {
+    let on_screen = shape(camera, tile, z);
+    let size = on_screen.width * RUBBISH_SIZE;
+
+    for bit in 0..rubbish {
+        let step = f32::from(bit);
+        #[allow(clippy::cast_possible_truncation)]
+        let from_x = f32::from((tile.x.unsigned_abs() % 5) as u8);
+        #[allow(clippy::cast_possible_truncation)]
+        let from_y = f32::from((tile.y.unsigned_abs() % 7) as u8);
+
+        let across = (step * 0.37 + from_x * 0.11).fract() - 0.5;
+        let down = (step * 0.61 + from_y * 0.09).fract() - 0.5;
+
+        canvas.fill_tile(
+            TileShape {
+                centre: ScreenPoint::new(
+                    on_screen.centre.x + across * on_screen.width * 0.5,
+                    on_screen.centre.y + down * on_screen.height * 0.5,
+                ),
+                width: size,
+                height: size / 2.0,
+            },
+            RUBBISH,
+        );
     }
 }
 
@@ -186,6 +232,25 @@ mod tests {
 
         assert!(raised.y < ground.y, "the hill went the wrong way");
         assert!((raised.x - ground.x).abs() < f32::EPSILON, "and sideways");
+    }
+
+    #[test]
+    fn rubbish_is_drawn_on_top_of_the_ground_it_is_lying_on() {
+        let (mut park, camera) = fixture();
+        let tile = TilePos::new(8, 8);
+
+        let mut clean = Recorder::new();
+        draw_land(&mut clean, &park, &camera);
+
+        park.drop_litter(tile, Park::MAX_LITTER);
+        let mut littered = Recorder::new();
+        draw_land(&mut littered, &park, &camera);
+
+        assert_eq!(
+            fills(&littered),
+            fills(&clean) + usize::from(Park::MAX_LITTER),
+            "one mark a bit of rubbish, drawn over the tile rather than instead of it"
+        );
     }
 
     #[test]

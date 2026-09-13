@@ -777,7 +777,7 @@ mod tests {
         let stalls: Vec<TilePos> = park
             .facilities()
             .iter()
-            .filter(|(_, built)| built.is_some_and(|shop| shop.kind() == Facility::FoodStall))
+            .filter(|(_, built)| built.is_some())
             .map(|(tile, _)| tile)
             .collect();
         assert!(!stalls.is_empty(), "there is nothing to overcharge for");

@@ -101,6 +101,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Toolbar 0 is the money; the flat rides moved onto toolbar 7 beside running
   them.
 
+- Thirst and a bladder. `Facility` gained a drink stall, a toilet and a litter
+  bin; guests consider every want in order — toilet, drink, food, a sit down,
+  then a ride — and take the first the park can answer.
+- Litter. Guests drop rubbish where there is no bin within reach, it counts
+  against the park's looks, and the handyman sweeps it before he mows.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

@@ -65,7 +65,8 @@ openpark — a park simulator
     --load PATH         start from a saved park instead of a new one
     --save PATH         save there once the park is ready, and bind the save
                         tools to it
-    --tool NAME         inspect, stall, bench, demolish, price-up,
+    --tool NAME         inspect, stall, drinks, bench, toilet, bin,
+                        demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
                         dig, path, queue, grass, dirt, water, tree,
                         flowerbed, fountain, lamp, uproot, carousel, wheel,
@@ -184,7 +185,10 @@ fn tool(value: &str) -> Result<Tool> {
     match value {
         "inspect" => Ok(Tool::Inspect),
         "stall" => Ok(Tool::Build(Facility::FoodStall)),
+        "drinks" => Ok(Tool::Build(Facility::DrinkStall)),
         "bench" => Ok(Tool::Build(Facility::Bench)),
+        "toilet" => Ok(Tool::Build(Facility::Toilet)),
+        "bin" => Ok(Tool::Build(Facility::Bin)),
         "demolish" => Ok(Tool::Demolish),
         "price-up" => Ok(Tool::RaisePrice),
         "price-down" => Ok(Tool::LowerPrice),

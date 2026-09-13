@@ -157,6 +157,7 @@ impl Park {
         let mut looked_at = 0u32;
         let mut beauty = 0u32;
         let mut worn = 0u32;
+        let mut rubbish = 0u32;
 
         for (tile, ground) in self.terrain().iter() {
             match ground {
@@ -170,6 +171,7 @@ impl Park {
             }
 
             beauty += self.beauty_around(tile);
+            rubbish += u32::from(self.litter_at(tile));
         }
 
         if looked_at == 0 {
@@ -180,8 +182,12 @@ impl Park {
         let pretty = beauty as f32 / (looked_at as f32 * Rating::HANDSOME);
         #[allow(clippy::cast_precision_loss)]
         let shabby = worn as f32 / (looked_at as f32 * 2.0);
+        // Rubbish counts harder than bare earth: grass wears out on its own and
+        // litter is something somebody chose not to clear.
+        #[allow(clippy::cast_precision_loss)]
+        let squalid = rubbish as f32 / looked_at as f32;
 
-        (pretty - shabby).clamp(0.0, 1.0)
+        (pretty - shabby - squalid).clamp(0.0, 1.0)
     }
 
     /// How much scenery can be seen from `tile`.

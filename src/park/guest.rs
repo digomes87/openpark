@@ -360,7 +360,12 @@ impl Guest {
         self.money -= price;
         match shop.kind() {
             Facility::FoodStall => self.needs.eat(),
+            Facility::DrinkStall => self.needs.drink(),
             Facility::Bench => self.needs.rest(),
+            Facility::Toilet => self.needs.relieve(),
+            // Nobody uses a bin as a facility; the rubbish goes in as a guest
+            // walks past one.
+            Facility::Bin => {}
         }
 
         // Paid, used, and resentful about it: the guest got what it came for

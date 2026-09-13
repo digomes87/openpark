@@ -26,6 +26,13 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Needs {
     hunger: f32,
+    thirst: f32,
+    /// How badly the guest needs a toilet, from 0 to 1.
+    ///
+    /// The only need that is *filled* by having others answered: eating and
+    /// drinking both put something in, and a park that sells drinks without
+    /// building toilets has made a decision whether it meant to or not.
+    bladder: f32,
     energy: f32,
     happiness: f32,
     boredom: f32,
@@ -35,6 +42,16 @@ impl Needs {
     /// How hungry a guest is, from 0 (just eaten) to 1 (starving).
     pub const fn hunger(self) -> f32 {
         self.hunger
+    }
+
+    /// How thirsty it is, from 0 (just drunk) to 1 (parched).
+    pub const fn thirst(self) -> f32 {
+        self.thirst
+    }
+
+    /// How badly it needs a toilet, from 0 to 1 (desperate).
+    pub const fn bladder(self) -> f32 {
+        self.bladder
     }
 
     /// How much walking a guest has left in it, from 1 (fresh) to 0 (footsore).
@@ -60,8 +77,24 @@ impl Needs {
     /// anywhere to eat is felt within one sitting.
     pub const TICKS_UNTIL_HUNGRY: u32 = 12_000;
 
+    /// How many ticks of walking it takes to go from watered to parched.
+    ///
+    /// Faster than hunger: a park can get away with one food stall and cannot
+    /// get away with one drink stall.
+    pub const TICKS_UNTIL_THIRSTY: u32 = 7_000;
+
     /// How many ticks of walking it takes to wear a guest out completely.
     const TICKS_UNTIL_EXHAUSTED: u32 = 16_000;
+
+    /// How much of a bladder a meal fills, and a drink.
+    ///
+    /// A drink fills more than a meal, which is the whole reason drink stalls
+    /// and toilets are a pair.
+    const A_MEAL_FILLS: f32 = 0.25;
+    const A_DRINK_FILLS: f32 = 0.4;
+
+    /// How many ticks it takes a bladder to fill on its own.
+    const TICKS_UNTIL_DESPERATE: u32 = 30_000;
 
     /// How many ticks it takes a guest to run out of things to look at.
     ///
@@ -85,6 +118,15 @@ impl Needs {
 
     /// The energy below which the same happens.
     const TOO_TIRED: f32 = 0.3;
+
+    /// The thirst at which a guest starts looking for a drink.
+    const WANTS_A_DRINK: f32 = 0.3;
+
+    /// The bladder at which a guest starts looking for a toilet.
+    const WANTS_A_TOILET: f32 = 0.55;
+
+    /// The bladder past which a guest is not enjoying anything else.
+    const BURSTING: f32 = 0.85;
 
     /// The hunger at which a guest starts looking for something to eat.
     ///
@@ -112,6 +154,8 @@ impl Needs {
     pub const fn fresh() -> Self {
         Self {
             hunger: 0.0,
+            thirst: 0.0,
+            bladder: 0.0,
             energy: 1.0,
             happiness: 0.8,
             boredom: 0.0,
@@ -126,11 +170,20 @@ impl Needs {
         let effort = if walking { 1.0 } else { Self::RESTING };
 
         self.hunger = (self.hunger + Self::rate(Self::TICKS_UNTIL_HUNGRY) * effort).min(1.0);
+        self.thirst = (self.thirst + Self::rate(Self::TICKS_UNTIL_THIRSTY) * effort).min(1.0);
+        self.bladder = (self.bladder + Self::rate(Self::TICKS_UNTIL_DESPERATE)).min(1.0);
         self.energy = (self.energy - Self::rate(Self::TICKS_UNTIL_EXHAUSTED) * effort).max(0.0);
         self.boredom = (self.boredom + Self::rate(Self::TICKS_UNTIL_BORED)).min(1.0);
 
         let mood = if self.is_suffering() {
-            -Self::rate(Self::TICKS_UNTIL_MISERABLE)
+            // A guest that is bursting is not having a nice time that a ride can
+            // make up for: it sours twice as fast as anything else.
+            let desperate = if self.bladder > Self::BURSTING {
+                2.0
+            } else {
+                1.0
+            };
+            -Self::rate(Self::TICKS_UNTIL_MISERABLE) * desperate
         } else {
             Self::rate(Self::TICKS_UNTIL_DELIGHTED)
         };
@@ -156,6 +209,29 @@ impl Needs {
         self.hunger > Self::WANTS_FOOD
     }
 
+    /// Whether the guest would like a drink.
+    pub fn wants_a_drink(self) -> bool {
+        self.thirst > Self::WANTS_A_DRINK
+    }
+
+    /// Whether the guest is looking for a toilet.
+    ///
+    /// ```
+    /// # use openpark::park::Needs;
+    /// let mut needs = Needs::fresh();
+    /// assert!(!needs.wants_a_toilet(), "nobody arrives desperate");
+    ///
+    /// needs.drink();
+    /// needs.drink();
+    /// assert!(needs.wants_a_toilet(), "two drinks and no toilet in sight");
+    ///
+    /// needs.relieve();
+    /// assert!(!needs.wants_a_toilet());
+    /// ```
+    pub fn wants_a_toilet(self) -> bool {
+        self.bladder > Self::WANTS_A_TOILET
+    }
+
     /// Whether the guest would like to sit down.
     pub fn wants_a_sit_down(self) -> bool {
         self.energy < Self::WANTS_A_SIT_DOWN
@@ -174,13 +250,32 @@ impl Needs {
     /// assert!(needs.wants_a_ride());
     /// ```
     pub fn wants_a_ride(self) -> bool {
-        self.boredom > Self::WANTS_A_RIDE
+        // Nobody queues for a coaster while they are bursting. This is also
+        // what stops a park of rides papering over having no toilets: the
+        // guest stops taking the treat that was masking the problem.
+        self.boredom > Self::WANTS_A_RIDE && self.bladder <= Self::BURSTING
     }
 
     /// A meal: no longer hungry, and pleased about it.
     pub fn eat(&mut self) {
         self.hunger = 0.0;
+        self.bladder = (self.bladder + Self::A_MEAL_FILLS).min(1.0);
         self.cheer_up();
+    }
+
+    /// A drink: no longer thirsty, and something to do about later.
+    pub fn drink(&mut self) {
+        self.thirst = 0.0;
+        self.bladder = (self.bladder + Self::A_DRINK_FILLS).min(1.0);
+        self.cheer_up();
+    }
+
+    /// A toilet: the relief of it, and nothing else.
+    ///
+    /// No `cheer_up`: finding a toilet is not a treat, it is the absence of a
+    /// problem.
+    pub fn relieve(&mut self) {
+        self.bladder = 0.0;
     }
 
     /// A sit down: back on its feet, and pleased about it.
@@ -256,7 +351,11 @@ impl Needs {
     /// The slow way a mood goes down. [`Needs::dislike`] is the sharp one: a
     /// price over the odds, or ground worn down to bare earth.
     pub fn is_suffering(self) -> bool {
-        self.hunger > Self::TOO_HUNGRY || self.energy < Self::TOO_TIRED || self.boredom >= 1.0
+        self.hunger > Self::TOO_HUNGRY
+            || self.thirst > Self::TOO_HUNGRY
+            || self.bladder > Self::BURSTING
+            || self.energy < Self::TOO_TIRED
+            || self.boredom >= 1.0
     }
 
     /// Whether the guest has had enough and wants to go home.
@@ -349,6 +448,8 @@ mod tests {
             delighted.wear_down(false);
             delighted = Needs {
                 hunger: 0.0,
+                thirst: 0.0,
+                bladder: 0.0,
                 energy: 1.0,
                 boredom: 0.0,
                 ..delighted
@@ -428,6 +529,12 @@ mod tests {
             if looked_for_food.is_none() && needs.wants_food() {
                 looked_for_food = Some(tick);
             }
+            // Thirst arrives first and would be the thing suffered over, so it
+            // is kept answered: this test is about hunger.
+            if needs.wants_a_drink() {
+                needs.drink();
+                needs.relieve();
+            }
             if suffered.is_none() && needs.is_suffering() {
                 suffered = Some(tick);
             }
@@ -470,10 +577,18 @@ mod tests {
     }
 
     #[test]
-    fn a_park_that_feeds_and_entertains_its_guests_keeps_them() {
+    fn a_park_that_answers_every_need_keeps_its_guests() {
         let mut needs = Needs::fresh();
         for _ in 0..200_000 {
             needs.wear_down(true);
+
+            // A toilet first: it is the one thing that spoils everything else.
+            if needs.wants_a_toilet() {
+                needs.relieve();
+            }
+            if needs.wants_a_drink() {
+                needs.drink();
+            }
             if needs.wants_food() {
                 needs.eat();
             }
@@ -483,8 +598,34 @@ mod tests {
             if needs.wants_a_ride() {
                 needs.enjoy_a_ride(0.6, 0.4);
             }
+
             assert!(!needs.is_fed_up(), "a well-served guest gave up anyway");
         }
+    }
+
+    #[test]
+    fn a_park_that_sells_drinks_and_builds_no_toilets_regrets_it() {
+        let mut needs = Needs::fresh();
+        for _ in 0..200_000 {
+            needs.wear_down(true);
+            if needs.wants_a_drink() {
+                needs.drink();
+            }
+            if needs.wants_food() {
+                needs.eat();
+            }
+            if needs.wants_a_sit_down() {
+                needs.rest();
+            }
+            if needs.wants_a_ride() {
+                needs.enjoy_a_ride(0.6, 0.4);
+            }
+        }
+
+        assert!(
+            needs.is_fed_up(),
+            "a guest with nowhere to go was perfectly happy about it"
+        );
     }
 
     #[test]

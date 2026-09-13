@@ -42,6 +42,7 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     for dy in 0..CLEARING {
         for dx in 0..CLEARING {
             let tile = corner.offset(dx, dy);
+            park.demolish(tile);
             park.lay(tile, Terrain::Grass)
                 .with_context(|| format!("{tile:?} will not take grass"))?;
             while park.land().height_at(tile).unwrap_or_default() > 0 {
