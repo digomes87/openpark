@@ -67,6 +67,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version is refused rather than half-read. `--save` and `--load` on the command
   line, and toolbar 8 in the game.
 
+- Queues. `Terrain::Queue` is a path that only leads to a ride; `Queue` is the
+  line waiting for one, and `queue::line_from` works out where that line stands
+  from the path that was laid. Guests walk to the back, shuffle up as the front
+  boards, and give up if it never moves. A line holds as many as there is path
+  for it.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

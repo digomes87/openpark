@@ -52,6 +52,11 @@ ride that stalls does not open. What the test run finds becomes the ride's
 excitement and intensity, which is what decides both how much guests enjoy it and
 how much they will pay for it.
 
+Guests queue properly: they walk to the back of the line, shuffle up it as the
+front boards, and give up in a worse mood than they joined in if it never moves.
+A line holds as many people as there is queue path to stand on, so laying more of
+it is what lets a popular ride hold its crowd.
+
 Rides wear out as they run, and a worn ride breaks down. A mechanic puts it back
 together; a park without one never runs that ride again.
 
