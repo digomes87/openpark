@@ -19,17 +19,25 @@ use crate::park::Park;
 pub struct Objective {
     /// How many guests have to be in the park at once.
     pub guests: usize,
-    /// The tick by which they have to be.
+    /// What the park has to be rated, out of [`Rating::BEST`].
+    pub rating: u32,
+    /// The tick by which both have to be true.
     pub by: Tick,
 }
 
 impl Objective {
     /// How many guests a new park is asked for.
     ///
-    /// Most of the way to [`Park::CAPACITY`], so a park cannot drift into
-    /// winning: it needs rides people want to queue for and a reputation that
-    /// brings them in.
+    /// Most of the way to [`Park::CAPACITY`].
     pub const GUESTS: usize = 100;
+
+    /// What it is asked to be rated.
+    ///
+    /// A full park is not enough on its own: a field with a path across it fills
+    /// up too, for a while, because people keep arriving faster than the bored
+    /// ones leave. A rating has to be earned with rides worth queueing for,
+    /// something to look at, and a crowd that is enjoying itself.
+    pub const RATING: u32 = 600;
 
     /// How long it has to get them.
     ///
@@ -42,13 +50,19 @@ impl Objective {
     pub const fn standard() -> Self {
         Self {
             guests: Self::GUESTS,
+            rating: Self::RATING,
             by: Tick::new(Self::DEADLINE),
         }
     }
 
     /// What to call it in the HUD.
     pub fn describe(self) -> String {
-        format!("{} guests by tick {}", self.guests, self.by.get())
+        format!(
+            "{} guests and a rating of {} by tick {}",
+            self.guests,
+            self.rating,
+            self.by.get()
+        )
     }
 }
 
@@ -118,10 +132,11 @@ impl Park {
             return;
         }
 
-        if self.guests.len() >= self.objective.guests {
+        if self.guests.len() >= self.objective.guests && self.reputation >= self.objective.rating {
             self.outcome = Outcome::Won;
             tracing::info!(
                 guests = self.guests.len(),
+                rating = self.reputation,
                 tick = self.tick.get(),
                 "the park met its objective"
             );
@@ -132,6 +147,7 @@ impl Park {
             self.outcome = Outcome::Lost;
             tracing::info!(
                 guests = self.guests.len(),
+                rating = self.reputation,
                 wanted = self.objective.guests,
                 bankrupt = self.is_bankrupt(),
                 "the park missed its objective"
@@ -145,7 +161,27 @@ mod tests {
     use super::*;
 
     use crate::park::fixtures::{bankrupt_park, run};
-    use crate::park::Campaign;
+    use crate::park::{Campaign, Rating};
+
+    #[test]
+    fn a_full_park_is_not_enough_on_its_own() {
+        // A field with a path across it fills up too, for a while. The rating
+        // is the half of the objective that cannot be got by waiting.
+        let mut park = Park::new("A Field", 32, 32, 5).unwrap();
+        park.ask_for(Objective {
+            guests: 1,
+            rating: Rating::BEST,
+            by: Tick::new(Park::SLOWEST_ARRIVALS * 40),
+        });
+
+        let park = run(park, Park::SLOWEST_ARRIVALS * 20);
+        assert!(!park.guests().is_empty(), "nobody came at all");
+        assert_eq!(
+            park.outcome(),
+            Outcome::Pending,
+            "a field scored the best rating there is"
+        );
+    }
 
     #[test]
     fn a_new_park_has_something_to_do_and_has_not_done_it() {
@@ -162,6 +198,7 @@ mod tests {
         let mut park = Park::new("Popular", 32, 32, 5).unwrap();
         park.ask_for(Objective {
             guests: 3,
+            rating: 0,
             by: Tick::new(Park::SLOWEST_ARRIVALS * 20),
         });
 
@@ -178,6 +215,7 @@ mod tests {
         let mut park = Park::new("Quiet", 32, 32, 5).unwrap();
         park.ask_for(Objective {
             guests: Park::CAPACITY,
+            rating: Objective::RATING,
             by: Tick::new(100),
         });
 
@@ -201,6 +239,7 @@ mod tests {
         let mut park = Park::new("Popular", 32, 32, 5).unwrap();
         park.ask_for(Objective {
             guests: 2,
+            rating: 0,
             by: Tick::new(Park::SLOWEST_ARRIVALS * 40),
         });
         let mut park = run(park, Park::SLOWEST_ARRIVALS * 8);
@@ -220,6 +259,7 @@ mod tests {
         let mut park = Park::new("Popular", 32, 32, 5).unwrap();
         park.ask_for(Objective {
             guests: 1,
+            rating: 0,
             by: Tick::new(Park::SLOWEST_ARRIVALS * 4),
         });
         let mut park = run(park, Park::SLOWEST_ARRIVALS * 3);
@@ -227,6 +267,7 @@ mod tests {
 
         park.ask_for(Objective {
             guests: Park::CAPACITY,
+            rating: Objective::RATING,
             by: Tick::new(park.tick().get() + Campaign::LENGTH),
         });
         assert_eq!(park.outcome(), Outcome::Pending, "the old result stuck");
@@ -237,6 +278,7 @@ mod tests {
         let mut park = Park::new("Popular", 32, 32, 5).unwrap();
         park.ask_for(Objective {
             guests: 7,
+            rating: 250,
             by: Tick::new(12_345),
         });
         let park = run(park, 500);
