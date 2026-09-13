@@ -70,6 +70,19 @@ corner nobody visits does nothing. The rating is what decides how busy the gate
 gets: word of mouth is the only advertising a park has, and a park nobody has
 heard of fills four times slower than one everybody is talking about.
 
+Guests want more than feeding. Thirst arrives before hunger, and a drink fills a
+bladder faster than a meal does — so a park that sells drinks without building
+toilets has made a decision whether it meant to or not. A bursting guest sours
+twice as fast as any other kind of unhappy one and stops queueing for rides
+altogether.
+
+Whatever the meal came in has to go somewhere: a bin within four tiles takes it,
+and otherwise the path does and remembers. Rubbish counts against the park's
+rating harder than worn grass does, and the handyman sweeps before he mows.
+
+![Litter along a queue path, a toilet and a drink stall beside the
+crossroads](docs/images/litter.png)
+
 Guests queue properly: they walk to the back of the line, shuffle up it as the
 front boards, and give up in a worse mood than they joined in if it never moves.
 A line holds as many people as there is queue path to stand on, so laying more of

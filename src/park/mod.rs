@@ -377,6 +377,20 @@ impl Park {
         self.litter.get(tile).copied().unwrap_or(0)
     }
 
+    /// Drops `how_much` rubbish on one tile, up to what it will hold.
+    ///
+    /// The generator's and the tests' door in, the way [`Park::set_terrain`] is:
+    /// guests drop their own as they go.
+    pub fn drop_litter(&mut self, tile: TilePos, how_much: u8) -> u8 {
+        let on = self
+            .litter_at(tile)
+            .saturating_add(how_much)
+            .min(Self::MAX_LITTER);
+
+        self.litter.replace(tile, on);
+        on
+    }
+
     /// How much rubbish is lying about the whole park.
     pub fn rubbish(&self) -> u32 {
         self.litter.as_slice().iter().map(|&on| u32::from(on)).sum()
