@@ -45,6 +45,7 @@ src/
 ├── cli.rs         Options: the flags, parsed by hand
 ├── screenshot.rs  the one deliberate reach past the Renderer trait
 ├── demo.rs        the coaster the screenshots are of
+├── save.rs        the save file: a version, a park, and an atomic write
 ├── lib.rs         the library, so all of the above can be tested
 └── main.rs        the window, and nothing else
 ```
