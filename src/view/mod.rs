@@ -108,6 +108,7 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         Tool::TestRide | Tool::OpenRide | Tool::CloseRide | Tool::DemolishRide => {
             park.ride_at(tile).is_some()
         }
+        Tool::Buy(kind) => park.can_buy_a_ride(tile, kind),
         Tool::Plant(scenery) => park.can_plant(tile, scenery),
         Tool::Uproot => park.scenery_at(tile).is_some(),
     };

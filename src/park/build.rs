@@ -10,8 +10,8 @@ use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
 use crate::park::{
-    Facility, Heading, Land, Money, Park, Ride, RideStats, Scenery, Segment, Shop, Terrain, Track,
-    TrackPiece,
+    Facility, FlatRide, Heading, Land, Money, Park, Ride, RideStats, Scenery, Segment, Shop,
+    Terrain, Track, TrackPiece,
 };
 
 impl Park {
@@ -44,11 +44,7 @@ impl Park {
     ///
     /// Fails if there is nothing on that tile to put a price on.
     pub fn raise_the_price_at(&mut self, tile: TilePos) -> Result<Money> {
-        if let Some(at) = self
-            .rides
-            .iter()
-            .position(|ride| ride.track().occupies(tile))
-        {
+        if let Some(at) = self.rides.iter().position(|ride| ride.occupies(tile)) {
             return Ok(self.rides[at].raise_price());
         }
 
@@ -61,11 +57,7 @@ impl Park {
     ///
     /// Fails if there is nothing on that tile to put a price on.
     pub fn lower_the_price_at(&mut self, tile: TilePos) -> Result<Money> {
-        if let Some(at) = self
-            .rides
-            .iter()
-            .position(|ride| ride.track().occupies(tile))
-        {
+        if let Some(at) = self.rides.iter().position(|ride| ride.occupies(tile)) {
             return Ok(self.rides[at].lower_price());
         }
 
@@ -330,6 +322,97 @@ impl Park {
         Ok(id)
     }
 
+    /// Buys a flat ride and stands it with its corner on `tile`.
+    ///
+    /// Charged and open in one go: there is no layout to get wrong, so there is
+    /// nothing to test either. All that is left to decide is what to charge.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the park is bankrupt, cannot pay, already has
+    /// [`Park::MAX_RIDES`], or the square of land it needs will not take it.
+    ///
+    /// ```
+    /// # use openpark::park::{FlatRide, Park};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// park.adjust_cash(5_000);
+    /// let before = park.cash();
+    ///
+    /// let id = park.buy_a_ride("The Carousel", FlatRide::Carousel, TilePos::new(4, 4))?;
+    /// assert_eq!(park.cash(), before - FlatRide::Carousel.cost());
+    /// assert!(park.ride(id).is_some_and(|ride| ride.is_open()), "it should be running");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn buy_a_ride(
+        &mut self,
+        name: impl Into<String>,
+        kind: FlatRide,
+        tile: TilePos,
+    ) -> Result<u32> {
+        self.check_flat_ride(tile, kind)?;
+
+        let id = self.next_ride_id;
+        self.next_ride_id = self.next_ride_id.wrapping_add(1);
+
+        let mut ride = Ride::bought(id, name, kind, tile);
+        ride.test().context("a bought ride would not run")?;
+        ride.open().context("a bought ride would not open")?;
+
+        self.rides.push(ride);
+        self.adjust_cash(-kind.cost());
+        Ok(id)
+    }
+
+    /// Whether [`Park::buy_a_ride`] would be allowed here.
+    pub fn can_buy_a_ride(&self, tile: TilePos, kind: FlatRide) -> bool {
+        self.check_flat_ride(tile, kind).is_ok()
+    }
+
+    /// Why a flat ride will not go here.
+    ///
+    /// Its whole footprint is checked, not just the corner: half a carousel on
+    /// buildable ground is no more use than none of one.
+    fn check_flat_ride(&self, tile: TilePos, kind: FlatRide) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot buy anything",
+        );
+        anyhow::ensure!(
+            self.rides.len() < Self::MAX_RIDES,
+            "a park cannot hold more than {} rides",
+            Self::MAX_RIDES,
+        );
+        anyhow::ensure!(
+            self.cash >= kind.cost(),
+            "a {} costs {} and the park has {}",
+            kind.name().to_lowercase(),
+            kind.cost(),
+            self.cash,
+        );
+
+        let ground = self
+            .land
+            .height_at(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?;
+
+        #[allow(clippy::cast_possible_wrap)]
+        let side = kind.footprint() as i32;
+        for dy in 0..side {
+            for dx in 0..side {
+                let under = tile.offset(dx, dy);
+                self.check_track_tile(under, None)?;
+                anyhow::ensure!(
+                    self.land.height_at(under) == Some(ground),
+                    "a {} needs {side} by {side} tiles of level ground, and {under:?} is not level with {tile:?}",
+                    kind.name().to_lowercase(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Whether [`Park::start_a_ride`] would be allowed here, for a cursor that
     /// wants to say so before the click.
     pub fn can_start_a_ride(&self, tile: TilePos) -> bool {
@@ -359,7 +442,10 @@ impl Park {
         );
 
         let at = self.index_of_ride(id)?;
-        let (tile, _, entry) = self.rides[at].track().next_place();
+        let (tile, _, entry) = self.rides[at]
+            .track()
+            .map(Track::next_place)
+            .with_context(|| format!("{} is not a ride you lay track on", self.rides[at].name()))?;
         let exit = entry + piece.climb();
 
         self.check_track_tile(tile, Some(id))?;
@@ -378,7 +464,10 @@ impl Park {
             );
         }
 
-        let laid = self.rides[at].track_mut().push(piece)?;
+        let laid = self.rides[at]
+            .track_mut()
+            .context("a ride that took a piece of track has no track")?
+            .push(piece)?;
         self.adjust_cash(-piece.cost());
         Ok(laid)
     }
@@ -387,7 +476,7 @@ impl Park {
     /// it.
     pub fn unlay_track(&mut self, id: u32) -> Option<TrackPiece> {
         let at = self.index_of_ride(id).ok()?;
-        self.rides[at].track_mut().pop()
+        self.rides[at].track_mut()?.pop()
     }
 
     /// Sends a test train round a ride's layout.
@@ -483,7 +572,7 @@ impl Park {
         let somebody_elses = self
             .rides
             .iter()
-            .find(|ride| Some(ride.id()) != mine && ride.track().occupies(tile));
+            .find(|ride| Some(ride.id()) != mine && ride.occupies(tile));
         anyhow::ensure!(
             somebody_elses.is_none(),
             "{tile:?} already has {} running across it",
@@ -627,7 +716,7 @@ mod tests {
     use crate::park::fixtures::{
         bankrupt_park, bare_park_opened_for, opened_for, park_with_a_coaster, run, A_WHOLE_VISIT,
     };
-    use crate::park::{RideState, Shop, StaffKind};
+    use crate::park::{Guest, RideState, Shop, StaffKind};
 
     #[test]
     fn a_cursor_can_ask_before_it_clicks() {
@@ -864,8 +953,12 @@ mod tests {
         let (park, id) = park_with_a_coaster();
         let ride = park.ride(id).expect("the ride is there");
 
-        assert_eq!(ride.track().len(), 12, "four corners and eight sides");
-        assert!(ride.track().cost() > 0);
+        assert_eq!(
+            ride.track().expect("a coaster").pieces().len(),
+            12,
+            "four corners and eight sides"
+        );
+        assert!(ride.layout().cost() > 0);
         assert!(
             park.wage_bill() >= ride.upkeep(),
             "a ride costs nothing to run"
@@ -892,7 +985,7 @@ mod tests {
     #[test]
     fn track_cannot_be_laid_on_anything_that_is_already_there() {
         let (mut park, _) = park_with_a_coaster();
-        let taken = park.rides()[0].track().tiles()[0];
+        let taken = park.rides()[0].tiles()[0];
 
         assert!(park.build(taken, Facility::Bench).is_err(), "on the track");
         assert!(park.raise(taken).is_err(), "the land under the track moved");
@@ -1049,6 +1142,147 @@ mod tests {
         assert_eq!(
             loaded.ride(id).map(|ride| ride.trains().to_vec()),
             park.ride(id).map(|ride| ride.trains().to_vec())
+        );
+    }
+
+    #[test]
+    fn a_flat_ride_is_bought_open_and_running() {
+        let mut park = Park::new("Bought", 32, 32, 5).unwrap();
+        park.adjust_cash(10_000);
+        let before = park.cash();
+
+        let id = park
+            .buy_a_ride("The Carousel", FlatRide::Carousel, TilePos::new(18, 16))
+            .expect("there should be room");
+        let ride = park.ride(id).expect("it is there");
+
+        assert_eq!(park.cash(), before - FlatRide::Carousel.cost());
+        assert!(ride.is_open(), "a bought ride arrives working");
+        assert_eq!(ride.flat(), Some(FlatRide::Carousel));
+        assert_eq!(ride.track(), None, "there is no track to lay");
+        assert_eq!(
+            ride.tiles().len(),
+            (FlatRide::Carousel.footprint() * FlatRide::Carousel.footprint()) as usize,
+            "it should stand on its whole footprint"
+        );
+    }
+
+    #[test]
+    fn a_flat_ride_needs_its_whole_square_of_level_ground() {
+        let mut park = Park::new("Bought", 32, 32, 5).unwrap();
+        park.adjust_cash(10_000);
+
+        let corner = TilePos::new(18, 16);
+        for dy in 0..3 {
+            for dx in 0..3 {
+                park.lay(corner.offset(dx, dy), Terrain::Grass).unwrap();
+                while park.land().height_at(corner.offset(dx, dy)).unwrap_or(0) > 0 {
+                    park.lower(corner.offset(dx, dy)).unwrap();
+                }
+            }
+        }
+        assert!(park.can_buy_a_ride(corner, FlatRide::HauntedHouse));
+
+        // One tile of the square lifted, and the whole thing is refused.
+        park.raise(corner.offset(1, 1)).unwrap();
+        assert!(
+            !park.can_buy_a_ride(corner, FlatRide::HauntedHouse),
+            "half a haunted house went up on a slope"
+        );
+    }
+
+    #[test]
+    fn a_flat_ride_will_not_go_where_something_already_is() {
+        let (mut park, _) = park_with_a_coaster();
+        park.adjust_cash(10_000);
+        let taken = park.rides()[0].tiles()[0];
+
+        assert!(!park.can_buy_a_ride(taken, FlatRide::TeaCups));
+        assert!(park.buy_a_ride("Nope", FlatRide::TeaCups, taken).is_err());
+    }
+
+    #[test]
+    fn a_flat_ride_blocks_everything_else_from_its_land() {
+        let mut park = Park::new("Bought", 32, 32, 5).unwrap();
+        park.adjust_cash(10_000);
+        let corner = TilePos::new(18, 16);
+        park.buy_a_ride("The Teacups", FlatRide::TeaCups, corner)
+            .expect("there should be room");
+
+        for tile in [corner, corner.offset(1, 1)] {
+            assert!(park.build(tile, Facility::Bench).is_err(), "{tile:?}");
+            assert!(park.plant(tile, Scenery::Tree).is_err(), "{tile:?}");
+            assert!(park.raise(tile).is_err(), "{tile:?}");
+        }
+    }
+
+    #[test]
+    fn the_timid_end_of_the_crowd_rides_the_gentle_things() {
+        let mut park = Park::new("Something For Everybody", 32, 32, 5).unwrap();
+        park.adjust_cash(20_000);
+        let gentle = park
+            .buy_a_ride("The Carousel", FlatRide::Carousel, TilePos::new(18, 16))
+            .expect("there should be room");
+
+        let park = run(park, A_WHOLE_VISIT);
+        let ride = park.ride(gentle).expect("it is there");
+
+        assert!(ride.riders() > 0, "nobody went on the carousel");
+
+        // And the carousel is the sort of thing anybody will go on, which is
+        // the whole reason to own one.
+        let stats = ride.stats().expect("it was tested");
+        assert_eq!(stats.category(), crate::park::Category::Gentle);
+        assert!(
+            stats.intensity < Guest::NERVE.0,
+            "the most timid guest in the park would not go on the carousel"
+        );
+    }
+
+    #[test]
+    fn a_flat_ride_loads_turns_and_lets_everybody_off() {
+        let mut park = Park::new("Bought", 32, 32, 5).unwrap();
+        park.adjust_cash(20_000);
+        let id = park
+            .buy_a_ride("The Teacups", FlatRide::TeaCups, TilePos::new(18, 16))
+            .unwrap();
+
+        let mut ever_full = false;
+        let mut ever_turning = false;
+        for _ in 0..A_WHOLE_VISIT {
+            park.tick_once();
+            let ride = park.ride(id).expect("it is there");
+
+            // Turning: nobody can get on while it is going round.
+            if ride.boarding().is_none() && ride.is_open() {
+                ever_turning = true;
+            }
+            if ride.riders() >= FlatRide::TeaCups.seats() {
+                ever_full = true;
+            }
+        }
+
+        assert!(ever_turning, "the teacups never went round");
+        assert!(ever_full, "the teacups never filled up");
+        assert!(park.ride(id).unwrap().takings() > 0, "and took no money");
+    }
+
+    #[test]
+    fn a_flat_ride_survives_a_save_mid_turn() {
+        let mut park = Park::new("Bought", 32, 32, 5).unwrap();
+        park.adjust_cash(20_000);
+        let id = park
+            .buy_a_ride("The Wheel", FlatRide::FerrisWheel, TilePos::new(18, 16))
+            .unwrap();
+        let park = run(park, 6_000);
+
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded, park);
+        assert_eq!(
+            loaded.ride(id).map(Ride::layout),
+            park.ride(id).map(Ride::layout)
         );
     }
 }

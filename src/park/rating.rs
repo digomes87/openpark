@@ -124,7 +124,7 @@ impl Park {
             .iter()
             .filter_map(|(_, planted)| planted.map(Scenery::cost))
             .sum();
-        let rides: Money = self.rides().iter().map(|ride| ride.track().cost()).sum();
+        let rides: Money = self.rides().iter().map(|ride| ride.layout().cost()).sum();
 
         built.saturating_add(planted).saturating_add(rides)
     }

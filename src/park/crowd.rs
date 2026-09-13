@@ -83,8 +83,7 @@ pub fn nearest_ride(
         .iter()
         .filter(|ride| ride.is_open() && guest.will_ride(ride))
         .flat_map(|ride| {
-            ride.track()
-                .stations()
+            ride.stations()
                 .into_iter()
                 .map(move |station| (from.manhattan_distance(station), ride.id(), station))
         })
@@ -94,7 +93,11 @@ pub fn nearest_ride(
     for (_, ride, station) in candidates.into_iter().take(Park::FACILITY_ATTEMPTS) {
         // The back of the line, not the station: a guest joins a queue where it
         // ends, and the line itself walks it to the front.
-        let line = crate::park::queue::line_from(map.land, station);
+        let line = crate::park::queue::line_from(map.land, station, |tile| {
+            map.facilities.get(tile).is_some_and(Option::is_none)
+                && map.scenery.get(tile).is_some_and(Option::is_none)
+                && !rides.iter().any(|ride| ride.occupies(tile))
+        });
         for standing in line.into_iter().rev() {
             if let Some(route) = finder.find(map, from, standing) {
                 return Some((ride, station, route.tiles().to_vec()));

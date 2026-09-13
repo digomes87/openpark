@@ -70,7 +70,7 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     }
 
     queue_for(park, id).context("the demo coaster has nowhere to queue")?;
-    plant_around(park).context("the demo park has nowhere to plant")?;
+    plant_around(park);
 
     park.test_ride(id).context("the demo coaster stalls")?;
     park.open_ride(id)
@@ -85,10 +85,10 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
 /// rather than beauty anywhere, so scenery in the corner of the map would be a
 /// picture of the feature not working.
 ///
-/// # Errors
-///
-/// Fails if the ground beside the paths will not take it.
-fn plant_around(park: &mut Park) -> Result<()> {
+/// Whatever lands in the lake or under the coaster is simply skipped: this is
+/// decoration, and a demo park that refused to build because one flowerbed had
+/// nowhere to go would be no demo at all.
+fn plant_around(park: &mut Park) {
     #[allow(clippy::cast_possible_wrap)]
     let middle = park.height() as i32 / 2;
 
@@ -110,8 +110,6 @@ fn plant_around(park: &mut Park) -> Result<()> {
             let _ = park.plant(tile, planted);
         }
     }
-
-    Ok(())
 }
 
 /// Lays a queue path leading away from a ride's station.
@@ -128,7 +126,6 @@ fn queue_for(park: &mut Park, ride: u32) -> Result<()> {
     let station = *park
         .ride(ride)
         .context("there is no such ride")?
-        .track()
         .stations()
         .first()
         .context("the ride has no station")?;
@@ -177,12 +174,19 @@ mod tests {
         let ride = park.ride(id).expect("it should be there");
 
         assert_eq!(ride.state(), RideState::Open);
-        assert!(ride.track().is_a_circuit());
-        assert_eq!(ride.track().stations().len(), 1);
+        assert!(ride
+            .track()
+            .expect("the demo ride is a coaster")
+            .is_a_circuit());
+        assert_eq!(ride.stations().len(), 1);
 
         let stats = ride.stats().expect("it was tested");
         assert!(stats.excitement > 0.0, "it is not a coaster if it is dull");
-        assert_eq!(ride.track().longest_drop(), 2, "two drops in a row");
+        assert_eq!(
+            ride.track().expect("a coaster").longest_drop(),
+            2,
+            "two drops in a row"
+        );
 
         let queue = park
             .terrain()

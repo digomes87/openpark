@@ -7,6 +7,7 @@ mod day;
 mod facility;
 #[cfg(test)]
 mod fixtures;
+mod flat;
 mod guest;
 mod land;
 mod needs;
@@ -21,12 +22,13 @@ mod track;
 mod walk;
 
 pub use facility::Facility;
+pub use flat::FlatRide;
 pub use guest::{Guest, Plan};
 pub use land::Land;
 pub use needs::Needs;
 pub use queue::Queue;
 pub use rating::Rating;
-pub use ride::{Ride, RideState, RideStats, TestFailure, Train};
+pub use ride::{Category, Layout, Ride, RideState, RideStats, TestFailure, Train};
 pub use scenery::Scenery;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
@@ -433,9 +435,20 @@ impl Park {
         self.rides.iter().find(|ride| ride.id() == id)
     }
 
-    /// Whichever ride has track on `tile`, if any has.
+    /// Whether `tile` is free for somebody to stand on.
+    ///
+    /// Walkable ground with nothing built, planted or running on it. What the
+    /// pathfinder decides for a route, asked one tile at a time.
+    pub fn is_standing_room(&self, tile: TilePos) -> bool {
+        self.land.ground(tile).is_some_and(Terrain::is_walkable)
+            && self.facility_at(tile).is_none()
+            && self.scenery_at(tile).is_none()
+            && self.ride_at(tile).is_none()
+    }
+
+    /// Whichever ride stands on `tile`, if any does.
     pub fn ride_at(&self, tile: TilePos) -> Option<&Ride> {
-        self.rides.iter().find(|ride| ride.track().occupies(tile))
+        self.rides.iter().find(|ride| ride.occupies(tile))
     }
 }
 

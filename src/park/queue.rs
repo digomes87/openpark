@@ -118,23 +118,29 @@ impl Queue {
 /// The first tile is the one beside the station — where a guest has to be
 /// standing to get on — and the last is the back of the line.
 ///
-/// A station with no queue path beside it gets the walkable tiles next to it
-/// instead, so a ride built without a queue still works and simply cannot hold a
-/// line.
-pub fn line_from(land: &Land, station: TilePos) -> Vec<TilePos> {
+/// A station with no queue path beside it gets a tile next to it instead, so a
+/// ride built without a queue still works and simply cannot hold a line.
+///
+/// `standing_room` says whether a tile is free to stand on. Walkable ground is
+/// not enough on its own: a flat ride is entered from a corner of its own
+/// footprint, and the tiles around that corner include the rest of the machine.
+pub fn line_from(
+    land: &Land,
+    station: TilePos,
+    standing_room: impl Fn(TilePos) -> bool,
+) -> Vec<TilePos> {
     let mut line: Vec<TilePos> = Vec::new();
 
-    let start = station
-        .neighbours()
-        .into_iter()
-        .find(|tile| land.ground(*tile) == Some(Terrain::Queue));
+    let queued = |tile: TilePos| land.ground(tile) == Some(Terrain::Queue) && standing_room(tile);
 
-    let Some(start) = start else {
+    let Some(start) = station.neighbours().into_iter().find(|tile| queued(*tile)) else {
         // No queue laid: one place to stand, beside the station.
         return station
             .neighbours()
             .into_iter()
-            .filter(|tile| land.ground(*tile).is_some_and(Terrain::is_walkable))
+            .filter(|tile| {
+                land.ground(*tile).is_some_and(Terrain::is_walkable) && standing_room(*tile)
+            })
             .take(1)
             .collect();
     };
@@ -143,9 +149,10 @@ pub fn line_from(land: &Land, station: TilePos) -> Vec<TilePos> {
     line.push(here);
 
     while line.len() < Queue::MAX_LENGTH {
-        let next = here.neighbours().into_iter().find(|tile| {
-            *tile != station && land.ground(*tile) == Some(Terrain::Queue) && !line.contains(tile)
-        });
+        let next = here
+            .neighbours()
+            .into_iter()
+            .find(|tile| *tile != station && queued(*tile) && !line.contains(tile));
 
         let Some(next) = next else {
             break;
@@ -163,6 +170,12 @@ mod tests {
     use super::*;
 
     use isogrid::grid::Grid;
+
+    /// Everywhere is free to stand in these tests; what a park blocks is the
+    /// park's business and is tested there.
+    fn anywhere(_: TilePos) -> bool {
+        true
+    }
 
     fn land_with(queue: &[TilePos]) -> Land {
         let mut land = Land::flat(Grid::filled(16, 16, Terrain::Grass).unwrap()).unwrap();
@@ -241,7 +254,7 @@ mod tests {
         ];
         let ground = land_with(&path);
 
-        let line = line_from(&ground, station);
+        let line = line_from(&ground, station, anywhere);
         assert_eq!(line.len(), path.len());
         assert_eq!(line[0], path[0], "the front is beside the station");
         assert_eq!(line[3], path[3], "the back is the far end of the path");
@@ -250,7 +263,7 @@ mod tests {
     #[test]
     fn a_station_with_no_queue_path_has_one_place_to_stand() {
         let land = land_with(&[]);
-        let line = line_from(&land, TilePos::new(5, 5));
+        let line = line_from(&land, TilePos::new(5, 5), anywhere);
 
         assert_eq!(line.len(), 1, "an unqueued ride should hold one guest");
         assert!(line[0].neighbours().contains(&TilePos::new(5, 5)));
@@ -263,7 +276,7 @@ mod tests {
         // stay on it rather than crossing over.
         let land = land_with(&[TilePos::new(5, 6), TilePos::new(5, 4)]);
 
-        let line = line_from(&land, station);
+        let line = line_from(&land, station, anywhere);
         assert_eq!(line.len(), 1, "the line walked through the station");
     }
 
@@ -277,7 +290,10 @@ mod tests {
             ground.set_ground(*tile, Terrain::Queue);
         }
 
-        assert_eq!(line_from(&ground, station).len(), Queue::MAX_LENGTH);
+        assert_eq!(
+            line_from(&ground, station, anywhere).len(),
+            Queue::MAX_LENGTH
+        );
     }
 
     #[test]

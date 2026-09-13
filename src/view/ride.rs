@@ -10,7 +10,7 @@ use isogrid::camera::Camera;
 use isogrid::iso::{GridPoint, ScreenPoint};
 use isogrid::render::{Color, Renderer};
 
-use crate::park::{Park, Ride, RideState, Segment, TrackPiece};
+use crate::park::{Park, Ride, RideState, Segment, Track, TrackPiece};
 
 /// How thick the rails are drawn, as a fraction of a tile's width.
 const RAIL: f32 = 0.1;
@@ -48,7 +48,8 @@ pub fn draw_rides(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
         .iter()
         .flat_map(|ride| {
             ride.track()
-                .segments()
+                .map(Track::segments)
+                .unwrap_or_default()
                 .into_iter()
                 .map(move |laid| (laid, ride))
         })
@@ -61,6 +62,7 @@ pub fn draw_rides(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
     }
 
     for ride in park.rides() {
+        draw_flat(canvas, park, camera, scale, ride);
         draw_trains(canvas, camera, scale, ride);
     }
 }
@@ -117,9 +119,51 @@ fn draw_piece(
     }
 }
 
+/// A flat ride: a block the size of its footprint, with its machine above it.
+///
+/// Drawn from the middle of the square it stands on rather than from its corner,
+/// so a three-by-three haunted house does not sit off to one side of its own
+/// land.
+fn draw_flat(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, scale: f32, ride: &Ride) {
+    let Some(kind) = ride.flat() else {
+        return;
+    };
+
+    let tiles = ride.tiles();
+    #[allow(clippy::cast_precision_loss)]
+    let count = tiles.len() as f32;
+    let middle = tiles.iter().fold((0.0, 0.0, 0.0), |(x, y, z), tile| {
+        let point = park.land().point(*tile);
+        (
+            x + point.x / count,
+            y + point.y / count,
+            z + point.z / count,
+        )
+    });
+
+    let base = camera.world_to_screen(isogrid::iso::GridPoint::new(middle.0, middle.1, middle.2));
+    let width = f32::from(u16::try_from(kind.footprint()).unwrap_or(1)) * scale * 0.4;
+    let height = kind.height() * scale;
+
+    // The frame it stands on, then the machine itself above it, so a ferris
+    // wheel reads as a wheel on legs rather than a stripe on the grass.
+    canvas.line(
+        ScreenPoint::new(base.x - width / 2.0, base.y),
+        ScreenPoint::new(base.x + width / 2.0, base.y),
+        scale * 0.12,
+        kind.frame_colour(),
+    );
+    canvas.line(
+        base,
+        ScreenPoint::new(base.x, base.y - height),
+        width,
+        kind.colour(),
+    );
+}
+
 /// Every train on one ride, wherever it has got to.
 fn draw_trains(canvas: &mut dyn Renderer, camera: &Camera, scale: f32, ride: &Ride) {
-    let laid = ride.track().segments();
+    let laid = ride.track().map(Track::segments).unwrap_or_default();
 
     for train in ride.trains() {
         let Some(segment) = laid.get(train.at()) else {
@@ -253,6 +297,7 @@ mod tests {
         // station's platform, and the train.
         let raised = ride
             .track()
+            .expect("a coaster")
             .segments()
             .iter()
             .filter(|laid| {
@@ -261,8 +306,8 @@ mod tests {
             })
             .count();
 
-        let expected =
-            ride.track().len() * 2 + raised + ride.track().stations().len() + ride.trains().len();
+        let pieces = ride.track().expect("a coaster").pieces().len();
+        let expected = pieces * 2 + raised + ride.stations().len() + ride.trains().len();
         assert_eq!(lines(&canvas), expected);
     }
 
