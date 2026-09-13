@@ -4,6 +4,7 @@
 //! the trains, the payroll and the books. Everything here changes the park, and
 //! everything it needs to make a decision it asks [`super::crowd`] for.
 
+use isogrid::grid::Grid;
 use isogrid::iso::TilePos;
 use isogrid::path::PathFinder;
 use isogrid::rng::Rng;
@@ -14,7 +15,7 @@ use crate::park::crowd::{
 };
 use crate::park::queue;
 use crate::park::{
-    Facility, Guest, Money, Park, Plan, Queue, Rating, Ride, RideState, StaffKind, Terrain,
+    Facility, Guest, Money, Park, Plan, Queue, Rating, Ride, RideState, Shop, StaffKind, Terrain,
 };
 
 impl Park {
@@ -397,7 +398,8 @@ impl Park {
                     }
                 }
                 StaffKind::Handyman => {
-                    if tidying {
+                    if tidying && !self.sweep_up_around(at, kind.reach()) {
+                        // Nothing to sweep: get on with the mowing.
                         self.tidy_up_around(at, kind.reach());
                     }
                 }
@@ -433,6 +435,29 @@ impl Park {
             Ok(()) => tracing::info!(ride = %name, "a mechanic put a ride back into service"),
             Err(error) => tracing::warn!(%error, ride = %name, "a repaired ride would not open"),
         }
+    }
+
+    /// Sweeps the rubbish off one tile within `reach` of `at`.
+    ///
+    /// Returns whether there was any. Litter first and mowing second: a park
+    /// covered in rubbish does not want its grass cut.
+    fn sweep_up_around(&mut self, at: TilePos, reach: u32) -> bool {
+        #[allow(clippy::cast_possible_wrap)]
+        let span = reach as i32;
+
+        for dy in -span..=span {
+            for dx in -span..=span {
+                let tile = at.offset(dx, dy);
+                if at.manhattan_distance(tile) > reach || self.litter_at(tile) == 0 {
+                    continue;
+                }
+
+                self.litter.replace(tile, 0);
+                return true;
+            }
+        }
+
+        false
     }
 
     /// Puts one tile of worn ground within `reach` of `at` back to grass.
@@ -508,13 +533,14 @@ impl Park {
         // Everything the guests do to the park is collected as it happens and
         // applied afterwards: the land and the tills are borrowed out to the
         // pathfinder for the length of the walk.
-        let (takings, sales, trampled) = {
+        let (takings, sales, trampled, dropped) = {
             // Destructured so that the borrow checker can see the guests, the
             // land, what is built on it and the dice as separate things.
             let Self {
                 land,
                 facilities,
                 scenery,
+                litter,
                 guests,
                 rides,
                 rng,
@@ -533,6 +559,7 @@ impl Park {
             let mut takings = 0;
             let mut sales: Vec<(TilePos, Money)> = Vec::new();
             let mut trampled: Vec<TilePos> = Vec::new();
+            let mut dropped: Vec<TilePos> = Vec::new();
 
             for guest in guests.iter_mut() {
                 guest.live();
@@ -554,12 +581,13 @@ impl Park {
                         continue;
                     }
 
-                    if let Some(shop) = facilities.get(facility).copied().flatten() {
-                        let paid = guest.enjoy(&shop);
-                        if paid > 0 {
-                            takings += paid;
-                            sales.push((facility, paid));
-                        }
+                    let (paid, rubbish) = finish_with(guest, facilities, facility);
+                    if paid > 0 {
+                        takings += paid;
+                        sales.push((facility, paid));
+                    }
+                    if let Some(tile) = rubbish {
+                        dropped.push(tile);
                     }
                     guest.decide(Plan::Wandering);
                 }
@@ -571,10 +599,8 @@ impl Park {
                 let here = guest.tile();
                 let ground = land.ground(here).unwrap_or(Terrain::Grass);
 
-                // Worn-out ground is a shabby thing to walk across.
-                if ground == Terrain::Dirt {
-                    guest.put_off(Self::DIRT_IS_DREARY);
-                }
+                let rubbish = litter.get(here).copied().unwrap_or(0);
+                put_off_by_the_ground(guest, ground, rubbish);
 
                 if !guest.is_idle() {
                     // And the walking is what wears it out in the first place.
@@ -623,17 +649,40 @@ impl Park {
                 guest.advance(Self::speed_across(standing_on) * Self::pace_of(guest));
             }
 
-            (takings, sales, trampled)
+            (takings, sales, trampled, dropped)
         };
 
+        self.apply_what_the_crowd_did(takings, &sales, &trampled, &dropped);
+    }
+
+    /// Applies everything the crowd did while the map was borrowed out.
+    ///
+    /// The tills, the worn ground, the dropped rubbish and the bank, in that
+    /// order. Collected during the walk and applied here because the pathfinder
+    /// holds the land and the tills for the length of it.
+    fn apply_what_the_crowd_did(
+        &mut self,
+        takings: Money,
+        sales: &[(TilePos, Money)],
+        trampled: &[TilePos],
+        dropped: &[TilePos],
+    ) {
         for (tile, amount) in sales {
-            if let Some(Some(shop)) = self.facilities.get_mut(tile) {
-                shop.take(amount);
+            if let Some(Some(shop)) = self.facilities.get_mut(*tile) {
+                shop.take(*amount);
             }
         }
 
         for tile in trampled {
-            self.land.set_ground(tile, Terrain::Dirt);
+            self.land.set_ground(*tile, Terrain::Dirt);
+        }
+
+        for tile in dropped {
+            let on = self
+                .litter_at(*tile)
+                .saturating_add(1)
+                .min(Self::MAX_LITTER);
+            self.litter.replace(*tile, on);
         }
 
         self.adjust_cash(takings);
@@ -766,13 +815,66 @@ impl Park {
     }
 }
 
+/// Lets a guest finish with whatever it walked to, and takes its money.
+///
+/// Returns what it paid and where its rubbish ended up: a bin within reach
+/// takes it, and otherwise the path it is standing on does.
+fn finish_with(
+    guest: &mut Guest,
+    facilities: &Grid<Option<Shop>>,
+    facility: TilePos,
+) -> (Money, Option<TilePos>) {
+    let Some(shop) = facilities.get(facility).copied().flatten() else {
+        return (0, None);
+    };
+
+    let paid = guest.enjoy(&shop);
+    (paid, where_the_rubbish_goes(facilities, guest, shop.kind()))
+}
+
+/// Where a guest's rubbish ends up, if it ends up anywhere.
+///
+/// `None` when there is a bin within reach, or when the thing it just used was
+/// not something that comes with packaging.
+fn where_the_rubbish_goes(
+    facilities: &Grid<Option<Shop>>,
+    guest: &Guest,
+    used: Facility,
+) -> Option<TilePos> {
+    if !matches!(used, Facility::FoodStall | Facility::DrinkStall) {
+        return None;
+    }
+
+    let here = guest.tile();
+    let binned = facilities.iter().any(|(at, built)| {
+        built.is_some_and(|shop| shop.kind() == Facility::Bin)
+            && here.manhattan_distance(at) <= Park::BIN_REACH
+    });
+
+    (!binned).then_some(here)
+}
+
+/// Takes what the tile underfoot is like out on the guest standing on it.
+///
+/// Worn-out ground is a shabby thing to walk across, and somebody else's
+/// rubbish is worse.
+fn put_off_by_the_ground(guest: &mut Guest, ground: Terrain, rubbish: u8) {
+    if ground == Terrain::Dirt {
+        guest.put_off(Park::DIRT_IS_DREARY);
+    }
+    if rubbish > 0 {
+        guest.put_off(Park::LITTER_IS_GRIM);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use isogrid::iso::TilePos;
 
-    use crate::park::fixtures::{park_with_a_coaster, run};
+    use crate::park::fixtures::{park_with_a_coaster, run, A_WHOLE_VISIT};
+    use crate::park::StaffKind;
     use crate::park::{Queue, Ride, Train};
 
     #[test]
@@ -1027,5 +1129,102 @@ mod tests {
             !park.ride(id).unwrap().queue().holds(leaving),
             "somebody on their way home is still holding up the queue"
         );
+    }
+
+    #[test]
+    fn a_park_with_no_bins_ends_up_covered_in_rubbish() {
+        let park = run(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
+
+        assert!(
+            park.rubbish() > 0,
+            "a day of eating and drinking left no rubbish anywhere"
+        );
+        assert!(
+            park.litter()
+                .as_slice()
+                .iter()
+                .all(|&on| on <= Park::MAX_LITTER),
+            "a tile holds more rubbish than it is allowed to"
+        );
+    }
+
+    #[test]
+    fn bins_beside_the_stalls_keep_the_paths_clean() {
+        // The same park twice, the second with a bin beside everything that
+        // sells anything.
+        let bare = run(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
+
+        let mut binned = Park::new("Litter", 32, 32, 5).unwrap();
+        binned.adjust_cash(10_000);
+        let stalls: Vec<TilePos> = binned
+            .facilities()
+            .iter()
+            .filter(|(_, built)| {
+                built.is_some_and(|shop| {
+                    matches!(shop.kind(), Facility::FoodStall | Facility::DrinkStall)
+                })
+            })
+            .map(|(tile, _)| tile)
+            .collect();
+
+        for stall in stalls {
+            for beside in stall.neighbours() {
+                if binned.build(beside, Facility::Bin).is_ok() {
+                    break;
+                }
+            }
+        }
+        let binned = run(binned, A_WHOLE_VISIT);
+
+        assert!(
+            binned.rubbish() < bare.rubbish(),
+            "{} bits of rubbish with bins against {} without",
+            binned.rubbish(),
+            bare.rubbish()
+        );
+    }
+
+    #[test]
+    fn a_handyman_sweeps_the_rubbish_up() {
+        let mut park = run(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
+        let dropped = park.rubbish();
+        assert!(dropped > 0, "there was nothing to sweep");
+
+        park.adjust_cash(10_000);
+        park.hire(StaffKind::Handyman).unwrap();
+        let park = run(park, A_WHOLE_VISIT);
+
+        assert!(
+            park.rubbish() < dropped,
+            "the handyman left all {dropped} bits of it where they were"
+        );
+    }
+
+    #[test]
+    fn rubbish_counts_against_what_people_think_of_the_park() {
+        let mut park = Park::new("Litter", 32, 32, 5).unwrap();
+        let clean = park.rating().looks;
+
+        #[allow(clippy::cast_possible_wrap)]
+        let middle = park.height() as i32 / 2;
+        for x in 0..park.width() {
+            #[allow(clippy::cast_possible_wrap)]
+            let tile = TilePos::new(x as i32, middle);
+            park.litter.replace(tile, Park::MAX_LITTER);
+        }
+
+        assert!(
+            park.rating().looks < clean || clean == 0.0,
+            "a path knee-deep in rubbish looked just as good"
+        );
+    }
+
+    #[test]
+    fn the_rubbish_survives_a_save() {
+        let park = run(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
+        let json = serde_json::to_string(&park).unwrap();
+        let loaded: Park = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(loaded.rubbish(), park.rubbish());
     }
 }

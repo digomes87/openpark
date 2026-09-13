@@ -64,6 +64,8 @@ pub struct Park {
     land: Land,
     facilities: Grid<Option<Shop>>,
     scenery: Grid<Option<Scenery>>,
+    /// How much rubbish is on each tile.
+    litter: Grid<u8>,
     guests: Vec<Guest>,
     staff: Vec<Staff>,
     rides: Vec<Ride>,
@@ -175,7 +177,23 @@ impl Park {
     const TRAMPLE_CHANCE: f32 = 0.002;
 
     /// How much mood a guest loses per tick of standing on worn-out ground.
-    const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
+    pub(super) const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
+
+    /// The most rubbish one tile will hold.
+    ///
+    /// Past this it stops looking worse and starts being somebody else's
+    /// problem, which is what a handyman is for.
+    pub const MAX_LITTER: u8 = 4;
+
+    /// How far a guest will carry its rubbish looking for a bin.
+    ///
+    /// Short: a park that wants its paths clean needs bins along them, not one
+    /// by the gate.
+    pub(super) const BIN_REACH: u32 = 4;
+
+    /// How much mood a guest loses per tick of standing in somebody else's
+    /// rubbish.
+    pub(super) const LITTER_IS_GRIM: f32 = 1.0 / 6_000.0;
 
     /// How much faster somebody shuffling up a queue moves than somebody
     /// walking across the park.
@@ -263,12 +281,15 @@ impl Park {
             .context("the park is too small or too large for the engine to hold")?;
         let scenery = Grid::filled(width, height, None)
             .context("the park is too small or too large for the engine to hold")?;
+        let litter = Grid::filled(width, height, 0)
+            .context("the park is too small or too large for the engine to hold")?;
 
         let mut park = Self {
             name: name.into(),
             land: Land::rolling(terrain, &mut rng)?,
             facilities,
             scenery,
+            litter,
             guests: Vec::new(),
             staff: Vec::new(),
             rides: Vec::new(),
@@ -344,6 +365,21 @@ impl Park {
     /// Everything put up to be looked at.
     pub const fn scenery(&self) -> &Grid<Option<Scenery>> {
         &self.scenery
+    }
+
+    /// How much rubbish is lying about, tile by tile.
+    pub const fn litter(&self) -> &Grid<u8> {
+        &self.litter
+    }
+
+    /// How much rubbish is on one tile.
+    pub fn litter_at(&self, tile: TilePos) -> u8 {
+        self.litter.get(tile).copied().unwrap_or(0)
+    }
+
+    /// How much rubbish is lying about the whole park.
+    pub fn rubbish(&self) -> u32 {
+        self.litter.as_slice().iter().map(|&on| u32::from(on)).sum()
     }
 
     /// The scenery on one tile, if there is any.
