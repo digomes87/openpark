@@ -70,7 +70,7 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     }
 
     queue_for(park, id).context("the demo coaster has nowhere to queue")?;
-    plant_around(park).context("the demo park has nowhere to plant")?;
+    plant_around(park);
 
     park.test_ride(id).context("the demo coaster stalls")?;
     park.open_ride(id)
@@ -85,10 +85,10 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
 /// rather than beauty anywhere, so scenery in the corner of the map would be a
 /// picture of the feature not working.
 ///
-/// # Errors
-///
-/// Fails if the ground beside the paths will not take it.
-fn plant_around(park: &mut Park) -> Result<()> {
+/// Whatever lands in the lake or under the coaster is simply skipped: this is
+/// decoration, and a demo park that refused to build because one flowerbed had
+/// nowhere to go would be no demo at all.
+fn plant_around(park: &mut Park) {
     #[allow(clippy::cast_possible_wrap)]
     let middle = park.height() as i32 / 2;
 
@@ -110,8 +110,6 @@ fn plant_around(park: &mut Park) -> Result<()> {
             let _ = park.plant(tile, planted);
         }
     }
-
-    Ok(())
 }
 
 /// Lays a queue path leading away from a ride's station.
