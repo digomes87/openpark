@@ -13,7 +13,7 @@ use isogrid::iso::TilePos;
 use isogrid::path::{PathFinder, Traversable};
 use isogrid::rng::Rng;
 
-use crate::park::{Facility, Guest, Land, Park, Ride, Shop, Terrain};
+use crate::park::{Facility, Guest, Land, Park, Ride, Scenery, Shop, Terrain};
 
 /// The park as the pathfinder sees it: ground that can be crossed, minus
 /// whatever has been built on it.
@@ -25,6 +25,9 @@ pub struct ParkMap<'a> {
     pub land: &'a Land,
     /// What is built on it, which blocks the tile it stands on.
     pub facilities: &'a Grid<Option<Shop>>,
+    /// What is planted on it, which blocks it just as thoroughly: nobody walks
+    /// through a tree.
+    pub scenery: &'a Grid<Option<Scenery>>,
 }
 
 impl Traversable for ParkMap<'_> {
@@ -33,7 +36,7 @@ impl Traversable for ParkMap<'_> {
     }
 
     fn step_cost(&self, from: TilePos, to: TilePos) -> Option<NonZeroU32> {
-        if self.facilities.get(to)?.is_some() {
+        if self.facilities.get(to)?.is_some() || self.scenery.get(to)?.is_some() {
             return None;
         }
 

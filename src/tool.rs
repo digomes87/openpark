@@ -1,6 +1,6 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, Park, Shop, StaffKind, Terrain, TrackPiece};
+use crate::park::{Facility, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece};
 
 /// The thing the pointer is currently holding.
 ///
@@ -49,6 +49,10 @@ pub enum Tool {
     Save,
     /// Clicking reads it back, throwing away everything since.
     Load,
+    /// Clicking puts up something to look at.
+    Plant(Scenery),
+    /// Clicking takes it down again.
+    Uproot,
 }
 
 impl Tool {
@@ -58,7 +62,7 @@ impl Tool {
     /// hand. That is the only arrangement that stays usable as the list grows:
     /// reaching "curve left" by pressing space twenty times is not a toolbar,
     /// which is why the engine grew the number row.
-    pub const KITS: [&'static [Self]; 8] = [
+    pub const KITS: [&'static [Self]; 9] = [
         // 1: look at things.
         &[Self::Inspect],
         // 2: stalls and benches.
@@ -111,6 +115,14 @@ impl Tool {
         // keyboard is the number row, the arrows, space and escape — and all of
         // those are spoken for.
         &[Self::Save, Self::Load],
+        // 9: things to look at.
+        &[
+            Self::Plant(Scenery::Tree),
+            Self::Plant(Scenery::Flowerbed),
+            Self::Plant(Scenery::Fountain),
+            Self::Plant(Scenery::Lamp),
+            Self::Uproot,
+        ],
     ];
 
     /// Which toolbar this tool is on, counting from zero.
@@ -150,6 +162,14 @@ impl Tool {
         let kit = Self::KITS[self.kit()];
         let at = kit.iter().position(|tool| *tool == self).unwrap_or(0);
         kit[(at + 1) % kit.len()]
+    }
+
+    /// What it is planting, if it is planting anything.
+    pub const fn scenery(self) -> Option<Scenery> {
+        match self {
+            Self::Plant(scenery) => Some(scenery),
+            _ => None,
+        }
     }
 
     /// What piece of track it is laying, if it is laying one.
@@ -222,6 +242,14 @@ impl Tool {
             Self::DemolishRide => "Demolish the ride".to_owned(),
             Self::Save => format!("Save the park to {}", crate::save::DEFAULT_PATH),
             Self::Load => format!("Load {}", crate::save::DEFAULT_PATH),
+            Self::Plant(scenery) => {
+                format!(
+                    "Plant {} ({})",
+                    scenery.name().to_lowercase(),
+                    scenery.cost()
+                )
+            }
+            Self::Uproot => "Take the scenery down".to_owned(),
         }
     }
 }
@@ -317,6 +345,16 @@ mod tests {
         assert_eq!(Tool::Inspect.terrain(), None);
         assert_eq!(Tool::Raise.terrain(), None);
         assert_eq!(Tool::Lay(Terrain::Path).terrain(), Some(Terrain::Path));
+    }
+
+    #[test]
+    fn everything_that_can_be_planted_is_in_the_cycle() {
+        for scenery in Scenery::ALL {
+            assert!(
+                all_tools().contains(&Tool::Plant(scenery)),
+                "{scenery:?} cannot be planted with the mouse"
+            );
+        }
     }
 
     #[test]

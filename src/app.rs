@@ -320,6 +320,14 @@ impl OpenPark {
             Tool::OpenRide => Some(self.open_the_ride(tile)),
             Tool::CloseRide => Some(self.close_the_ride(tile)),
             Tool::DemolishRide => Some(self.demolish_the_ride(tile)),
+            Tool::Plant(scenery) => Some(match self.park.plant(tile, scenery) {
+                Ok(()) => format!("Planted a {}", scenery.name().to_lowercase()),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Uproot => Some(self.park.uproot(tile).map_or_else(
+                || "There is nothing planted there".to_owned(),
+                |scenery| format!("Took the {} down", scenery.name().to_lowercase()),
+            )),
             Tool::Save => Some(match crate::save::save(&self.park, &self.save_path) {
                 Ok(()) => format!("Saved to {}", self.save_path.display()),
                 Err(refused) => format!("{refused:#}"),
