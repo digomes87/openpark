@@ -90,6 +90,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guests have a nerve as well as a wallet, and refuse anything rougher than they
   are brave. `RideStats::category` calls a ride gentle, thrill or extreme.
 
+- A bank: `Park::borrow` and `Park::repay`, capped at 20,000, with interest
+  charged on what is owed at every wage bill.
+- Marketing: `Park::advertise` buys a campaign that lends the park a reputation
+  it has not earned while it runs, which is what the gate goes by
+  (`Park::regard`).
+- An objective: a hundred guests at once and a rating of 600 by tick 40,000.
+  `Park::outcome` is won, lost or pending; bankruptcy loses on the spot, and
+  winning sticks.
+- Toolbar 0 is the money; the flat rides moved onto toolbar 7 beside running
+  them.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and
