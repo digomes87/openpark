@@ -45,6 +45,10 @@ pub enum Tool {
     CloseRide,
     /// Clicking takes the whole thing down.
     DemolishRide,
+    /// Clicking writes the park to its save file.
+    Save,
+    /// Clicking reads it back, throwing away everything since.
+    Load,
 }
 
 impl Tool {
@@ -54,7 +58,7 @@ impl Tool {
     /// hand. That is the only arrangement that stays usable as the list grows:
     /// reaching "curve left" by pressing space twenty times is not a toolbar,
     /// which is why the engine grew the number row.
-    pub const KITS: [&'static [Self]; 7] = [
+    pub const KITS: [&'static [Self]; 8] = [
         // 1: look at things.
         &[Self::Inspect],
         // 2: stalls and benches.
@@ -102,6 +106,10 @@ impl Tool {
             Self::CloseRide,
             Self::DemolishRide,
         ],
+        // 8: the save file. A click rather than a key, because the engine's
+        // keyboard is the number row, the arrows, space and escape — and all of
+        // those are spoken for.
+        &[Self::Save, Self::Load],
     ];
 
     /// Which toolbar this tool is on, counting from zero.
@@ -211,6 +219,8 @@ impl Tool {
             Self::OpenRide => "Open the ride".to_owned(),
             Self::CloseRide => "Shut the ride".to_owned(),
             Self::DemolishRide => "Demolish the ride".to_owned(),
+            Self::Save => format!("Save the park to {}", crate::save::DEFAULT_PATH),
+            Self::Load => format!("Load {}", crate::save::DEFAULT_PATH),
         }
     }
 }

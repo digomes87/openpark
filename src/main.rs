@@ -40,8 +40,13 @@ async fn main() -> Result<()> {
         refused
     })?;
 
-    let mut park = Park::new("Forest Frontiers", PARK_SIZE, PARK_SIZE, options.seed)
-        .context("failed to lay out the starting park")?;
+    // A saved park comes back exactly as it was, so nothing else on the command
+    // line that generates land applies to it.
+    let mut park = match &options.load {
+        Some(path) => openpark::save::load(path).context("failed to load the save")?,
+        None => Park::new("Forest Frontiers", PARK_SIZE, PARK_SIZE, options.seed)
+            .context("failed to lay out the starting park")?,
+    };
 
     // Laid before the clock runs, so a fast-forward has something to queue for.
     if options.coaster {
@@ -64,9 +69,17 @@ async fn main() -> Result<()> {
         "opening the gates"
     );
 
+    if let Some(path) = &options.save {
+        openpark::save::save(&park, path).context("failed to save the park")?;
+    }
+
     #[allow(clippy::cast_precision_loss)]
     let mut game = OpenPark::new(park, WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32)
         .context("failed to set up the view")?;
+
+    if let Some(path) = options.save.or(options.load) {
+        game.save_to(path);
+    }
 
     game.select(options.tool);
     game.pin_pointer(options.hover);
