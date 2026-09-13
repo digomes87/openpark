@@ -321,6 +321,18 @@ impl OpenPark {
             Tool::OpenRide => Some(self.open_the_ride(tile)),
             Tool::CloseRide => Some(self.close_the_ride(tile)),
             Tool::DemolishRide => Some(self.demolish_the_ride(tile)),
+            Tool::Borrow => Some(match self.park.borrow(crate::park::Park::LOAN_STEP) {
+                Ok(owed) => format!("The park owes the bank {owed}"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Repay => Some(match self.park.repay(crate::park::Park::LOAN_STEP) {
+                Ok(owed) => format!("The park owes the bank {owed}"),
+                Err(refused) => refused.to_string(),
+            }),
+            Tool::Advertise => Some(match self.park.advertise() {
+                Ok(()) => "The park is being advertised".to_owned(),
+                Err(refused) => refused.to_string(),
+            }),
             Tool::Buy(kind) => Some({
                 let name = format!("{} {}", kind.name(), self.park.rides().len() + 1);
                 match self.park.buy_a_ride(name, kind, tile) {

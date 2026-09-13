@@ -95,7 +95,17 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         // says rather than where the pointer is; and a save has nothing to do
         // with the tile under the pointer at all. None of them has a yes or a
         // no to show.
-        Tool::Inspect | Tool::Track(_) | Tool::Unlay | Tool::Save | Tool::Load => return HIGHLIGHT,
+        // Nothing here has a yes or a no to show for the tile under the
+        // pointer: looking changes nothing, track goes where the layout says,
+        // and the bank and the billboards are not on the map at all.
+        Tool::Inspect
+        | Tool::Track(_)
+        | Tool::Unlay
+        | Tool::Save
+        | Tool::Load
+        | Tool::Borrow
+        | Tool::Repay
+        | Tool::Advertise => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
         Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
         // Hiring happens at the gate, so every tile is as good as any other;
@@ -161,6 +171,20 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
             crate::park::Rating::BEST
         ),
         format!("Value: {}", park.value()),
+        if park.loan() > 0 {
+            format!("Loan: {} ({} a bill)", park.loan(), park.interest())
+        } else {
+            "Loan: none".to_owned()
+        },
+        park.campaign().map_or_else(
+            || "Not advertising".to_owned(),
+            |campaign| format!("Advertising: {} ticks left", campaign.ticks_left()),
+        ),
+        format!(
+            "Objective: {} — {}",
+            park.objective().describe(),
+            park.outcome().name()
+        ),
         format!("Tick: {}", park.tick().get()),
         format!("Zoom: {:.2}x", camera.zoom()),
         under_pointer,
