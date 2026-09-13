@@ -61,6 +61,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   coloured by what the ride is doing.
 - `--coaster` lays the demo ride the README picture shows.
 
+- Save and load. `save::save` and `save::load` write and read a versioned JSON
+  save, written to a `.part` file and renamed into place so an interrupted save
+  cannot replace a good one with half of a new one. A save from an unknown
+  version is refused rather than half-read. `--save` and `--load` on the command
+  line, and toolbar 8 in the game.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

@@ -26,6 +26,7 @@ pub mod app;
 pub mod cli;
 pub mod demo;
 pub mod park;
+pub mod save;
 pub mod screenshot;
 pub mod tool;
 pub mod view;

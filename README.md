@@ -55,6 +55,8 @@ how much they will pay for it.
 Rides wear out as they run, and a worn ride breaks down. A mechanic puts it back
 together; a park without one never runs that ride again.
 
+All of it saves and loads, dice included.
+
 The land has a shape. A new park is rolling rather than flat, and you can raise
 it, dig it out and pave it yourself. A step up costs a guest four times what flat
 ground does, so a crowd goes round a hill it could have climbed; two steps is a
@@ -92,7 +94,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `1` – `7` | Pick a toolbar: look, build, prices, staff, land, track, rides |
+| `1` – `8` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves |
 | `Space` | Walk along the toolbar in hand |
 | Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |
@@ -118,6 +120,19 @@ cargo run --release -- --screenshot docs/images/park.png \
 a busy afternoon does not take an afternoon to take. `--seed`, `--focus`,
 `--zoom`, `--tool` and `--hover` frame the shot, and `--coaster` lays the demo
 ride the picture above shows; `--help` lists them all.
+
+### Saving
+
+```sh
+cargo run --release -- --save my-park.save.json     # write one, then play
+cargo run --release -- --load my-park.save.json     # carry on where it left off
+```
+
+Toolbar `8` saves and loads with a click, to `openpark.save.json` unless `--save`
+or `--load` named somewhere else. A save is JSON with a version on the front:
+readable, diffable, and refused outright rather than half-read if it was written
+by a newer build. The dice are part of it, so a loaded park carries on exactly as
+the saved one would have — the same guests do the same things.
 
 ## How it is put together
 
@@ -146,7 +161,7 @@ code — be tested without opening a window.
 - [x] Shops, prices, staff and a park that can go bankrupt
 - [x] Terrain editing
 - [x] The track builder and ride physics
-- [ ] Save and load
+- [x] Save and load
 
 ## Development
 
