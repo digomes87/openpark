@@ -13,7 +13,7 @@ use isogrid::iso::TilePos;
 use isogrid::path::{PathFinder, Traversable};
 use isogrid::rng::Rng;
 
-use crate::park::{Facility, Guest, Land, Park, Ride, Shop, Terrain};
+use crate::park::{Facility, Guest, Land, Park, Ride, Scenery, Shop, Terrain};
 
 /// The park as the pathfinder sees it: ground that can be crossed, minus
 /// whatever has been built on it.
@@ -25,6 +25,9 @@ pub struct ParkMap<'a> {
     pub land: &'a Land,
     /// What is built on it, which blocks the tile it stands on.
     pub facilities: &'a Grid<Option<Shop>>,
+    /// What is planted on it, which blocks it just as thoroughly: nobody walks
+    /// through a tree.
+    pub scenery: &'a Grid<Option<Scenery>>,
 }
 
 impl Traversable for ParkMap<'_> {
@@ -33,7 +36,7 @@ impl Traversable for ParkMap<'_> {
     }
 
     fn step_cost(&self, from: TilePos, to: TilePos) -> Option<NonZeroU32> {
-        if self.facilities.get(to)?.is_some() {
+        if self.facilities.get(to)?.is_some() || self.scenery.get(to)?.is_some() {
             return None;
         }
 
@@ -80,8 +83,7 @@ pub fn nearest_ride(
         .iter()
         .filter(|ride| ride.is_open() && guest.will_ride(ride))
         .flat_map(|ride| {
-            ride.track()
-                .stations()
+            ride.stations()
                 .into_iter()
                 .map(move |station| (from.manhattan_distance(station), ride.id(), station))
         })
@@ -89,9 +91,15 @@ pub fn nearest_ride(
     candidates.sort_unstable();
 
     for (_, ride, station) in candidates.into_iter().take(Park::FACILITY_ATTEMPTS) {
-        // Guests board from the tile beside the station, never off the track.
-        for beside in station.neighbours() {
-            if let Some(route) = finder.find(map, from, beside) {
+        // The back of the line, not the station: a guest joins a queue where it
+        // ends, and the line itself walks it to the front.
+        let line = crate::park::queue::line_from(map.land, station, |tile| {
+            map.facilities.get(tile).is_some_and(Option::is_none)
+                && map.scenery.get(tile).is_some_and(Option::is_none)
+                && !rides.iter().any(|ride| ride.occupies(tile))
+        });
+        for standing in line.into_iter().rev() {
+            if let Some(route) = finder.find(map, from, standing) {
                 return Some((ride, station, route.tiles().to_vec()));
             }
         }

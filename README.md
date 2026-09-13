@@ -44,7 +44,16 @@ one a decision.
 ![A wooden coaster beside the crossroads: a station with a queue beside it, a
 chain lift, and raised track on timber supports](docs/images/coaster.png)
 
-Rides are built a piece at a time — station, straight, curves, slopes, a chain
+Not every ride is a coaster. A carousel, a ferris wheel, a haunted house and
+spinning teacups are bought rather than built: they stand on their own square of
+level ground, load, turn, and let everybody off. Guests arrive with a nerve as
+well as a wallet and will not go near a ride rougher than they are brave, which
+is why a park of nothing but lift hills has nothing at all for half its crowd.
+
+![A carousel beside the crossroads, with the coaster behind
+it](docs/images/carousel.png)
+
+Coasters are built a piece at a time — station, straight, curves, slopes, a chain
 lift, brakes, and driven track for the gentle ones — and a ride has to pass a
 test run before anybody is let on. A layout has to earn its speed from its own
 height: send a train at a hill it cannot climb and the test train stalls, and a
@@ -52,8 +61,29 @@ ride that stalls does not open. What the test run finds becomes the ride's
 excitement and intensity, which is what decides both how much guests enjoy it and
 how much they will pay for it.
 
+![Trees and flowerbeds along the paths, a queue of guests filing towards a
+coaster, and a park rating of 468 out of 1000](docs/images/scenery.png)
+
+Trees, flowerbeds, fountains and lamps are worth putting up because the park is
+judged on them — and judged where people actually walk, so a forest planted in a
+corner nobody visits does nothing. The rating is what decides how busy the gate
+gets: word of mouth is the only advertising a park has, and a park nobody has
+heard of fills four times slower than one everybody is talking about.
+
+Guests queue properly: they walk to the back of the line, shuffle up it as the
+front boards, and give up in a worse mood than they joined in if it never moves.
+A line holds as many people as there is queue path to stand on, so laying more of
+it is what lets a popular ride hold its crowd.
+
 Rides wear out as they run, and a worn ride breaks down. A mechanic puts it back
 together; a park without one never runs that ride again.
+
+There is a bank, a billboard and something to lose. A loan is capped and charges
+interest every wage bill, so borrowing brings tomorrow's guests forward and costs
+more than it gives back. A marketing campaign lends the park a reputation it has
+not earned, for a while. And a park has an objective — a hundred guests at once
+*and* a rating of 600, by tick 40,000 — which cannot be reached by waiting: a
+field with a path across it fills up too. Going bankrupt loses it on the spot.
 
 All of it saves and loads, dice included.
 
@@ -94,7 +124,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `1` – `8` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves |
+| `1` – `9`, `0` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery, money |
 | `Space` | Walk along the toolbar in hand |
 | Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |

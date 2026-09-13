@@ -36,8 +36,12 @@ pub enum Plan {
     Visiting { facility: TilePos },
     /// Standing at `facility`, busy until `until`.
     Using { facility: TilePos, until: Tick },
-    /// On the way to ride `ride`, which it will board from beside `station`.
-    Queueing { ride: u32, station: TilePos },
+    /// Waiting for `ride`, in the line that leads to `station`, since `since`.
+    Queueing {
+        ride: u32,
+        station: TilePos,
+        since: Tick,
+    },
     /// Aboard `ride`, and out of the park's way until it comes back round.
     Riding { ride: u32 },
     /// On the way to the gate, and out of the park once it gets there.
@@ -99,6 +103,12 @@ pub struct Guest {
     /// Drawn when the guest arrives, so a park full of people disagrees about
     /// whether a stall is a rip-off rather than emptying all at once.
     tolerance: f32,
+    /// How rough a ride this guest will go on, from 0 to 1.
+    ///
+    /// The reason a park wants a carousel as well as a coaster: the timid end of
+    /// the crowd will not go near a lift hill, and a park of nothing but lift
+    /// hills has nothing for them at all.
+    nerve: f32,
 }
 
 impl Guest {
@@ -114,6 +124,12 @@ impl Guest {
     /// Everything else is a fraction of it, by excitement — so the way to
     /// charge more is to build something better rather than to put the price up.
     const WORTH_OF_A_THRILL: Money = 40;
+
+    /// The most timid and the most fearless a guest can be.
+    ///
+    /// Nobody is too timid for a carousel, and nobody is brave enough not to
+    /// notice a ride that is trying to hurt them.
+    pub const NERVE: (f32, f32) = (0.2, 0.95);
 
     /// The least and the most a guest will pay over the fair price, as a
     /// multiple of it.
@@ -137,7 +153,28 @@ impl Guest {
             plan: Plan::Wandering,
             money,
             tolerance: f32::midpoint(least, most),
+            nerve: f32::midpoint(Self::NERVE.0, Self::NERVE.1),
         }
+    }
+
+    /// The same guest, braver or more timid.
+    ///
+    /// Clamped to [`Guest::NERVE`], for the same reason
+    /// [`Guest::with_tolerance`] clamps.
+    #[must_use]
+    pub fn with_nerve(mut self, nerve: f32) -> Self {
+        let (least, most) = Self::NERVE;
+        self.nerve = if nerve.is_nan() {
+            least
+        } else {
+            nerve.clamp(least, most)
+        };
+        self
+    }
+
+    /// How rough a ride this guest will go on.
+    pub const fn nerve(&self) -> f32 {
+        self.nerve
     }
 
     /// The same guest, but harder or easier to sell to.
@@ -203,6 +240,14 @@ impl Guest {
     /// What the guest is trying to do.
     pub const fn plan(&self) -> Plan {
         self.plan
+    }
+
+    /// The ride the guest is queueing for, and how long it has been waiting.
+    pub const fn queueing_for(&self) -> Option<(u32, Tick)> {
+        match self.plan {
+            Plan::Queueing { ride, since, .. } => Some((ride, since)),
+            _ => None,
+        }
     }
 
     /// Whether the guest is on its way out.
@@ -392,6 +437,12 @@ impl Guest {
             return false;
         };
 
+        // Nerve first: a guest that is frightened of a ride does not care what
+        // it costs.
+        if stats.intensity > self.nerve {
+            return false;
+        }
+
         #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
         let worth = (stats.excitement * Self::WORTH_OF_A_THRILL as f32 * self.tolerance) as Money;
 
@@ -429,6 +480,14 @@ impl Guest {
         self.walk
             .follow(route)
             .with_context(|| format!("guest {} cannot follow that route", self.id))
+    }
+
+    /// Stops where it is, dropping whatever route it was following.
+    ///
+    /// What joining a queue does: a guest that keeps walking the route it took
+    /// to get to the line walks straight past its place in it.
+    pub fn stop(&mut self) {
+        self.walk.stop();
     }
 
     /// Walks `distance` tiles along the route, stopping at the end of it.

@@ -109,8 +109,17 @@ impl Park {
             .sum();
 
         let rides: Money = self.rides.iter().map(Ride::upkeep).sum();
+        let planted: Money = self
+            .scenery
+            .iter()
+            .filter_map(|(_, planted)| planted.as_ref())
+            .map(|scenery| scenery.upkeep())
+            .sum();
 
-        wages.saturating_add(upkeep).saturating_add(rides)
+        wages
+            .saturating_add(upkeep)
+            .saturating_add(rides)
+            .saturating_add(planted)
     }
 
     /// Everything every till has taken since the park opened, rides included.
@@ -204,10 +213,16 @@ mod tests {
 
         let before = park.cash();
         let park = run(park, Park::TICKS_PER_WAGE_BILL);
+
+        // However many turned up — the gate goes by what people think of the
+        // place, not by a fixed clock — every one of them paid to get in, and
+        // exactly one wage bill came out.
+        let through_the_gate =
+            Money::try_from(park.guests().len() + park.guests_who_left() as usize).unwrap();
         assert_eq!(
             park.cash(),
-            before + Park::ADMISSION * 20 - bill,
-            "twenty tickets sold and one wage bill paid"
+            before + Park::ADMISSION * through_the_gate - bill,
+            "{through_the_gate} tickets sold and one wage bill of {bill} paid"
         );
     }
 
@@ -248,7 +263,7 @@ mod tests {
         let inside = park.guests().len();
         let cash = park.cash();
 
-        let park = run(park, Park::TICKS_BETWEEN_ARRIVALS * 4);
+        let park = run(park, Park::SLOWEST_ARRIVALS * 4);
         assert!(park.guests().len() <= inside, "somebody got in anyway");
         assert!(park.cash() <= cash, "somebody paid at the gate");
     }

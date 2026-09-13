@@ -1,6 +1,8 @@
 //! What the mouse does when you click.
 
-use crate::park::{Facility, Park, Shop, StaffKind, Terrain, TrackPiece};
+use crate::park::{
+    Campaign, Facility, FlatRide, Park, Scenery, Shop, StaffKind, Terrain, TrackPiece,
+};
 
 /// The thing the pointer is currently holding.
 ///
@@ -49,6 +51,18 @@ pub enum Tool {
     Save,
     /// Clicking reads it back, throwing away everything since.
     Load,
+    /// Clicking puts up something to look at.
+    Plant(Scenery),
+    /// Clicking takes it down again.
+    Uproot,
+    /// Clicking buys one of these and stands it on the tile under the pointer.
+    Buy(FlatRide),
+    /// Clicking borrows another slice from the bank.
+    Borrow,
+    /// Clicking pays a slice of it back.
+    Repay,
+    /// Clicking buys a marketing campaign.
+    Advertise,
 }
 
 impl Tool {
@@ -58,7 +72,7 @@ impl Tool {
     /// hand. That is the only arrangement that stays usable as the list grows:
     /// reaching "curve left" by pressing space twenty times is not a toolbar,
     /// which is why the engine grew the number row.
-    pub const KITS: [&'static [Self]; 8] = [
+    pub const KITS: [&'static [Self]; 10] = [
         // 1: look at things.
         &[Self::Inspect],
         // 2: stalls and benches.
@@ -81,6 +95,7 @@ impl Tool {
             Self::Raise,
             Self::Lower,
             Self::Lay(Terrain::Path),
+            Self::Lay(Terrain::Queue),
             Self::Lay(Terrain::Grass),
             Self::Lay(Terrain::Dirt),
             Self::Lay(Terrain::Water),
@@ -99,8 +114,12 @@ impl Tool {
             Self::Track(TrackPiece::Powered),
             Self::Unlay,
         ],
-        // 7: running the rides.
+        // 7: rides — the ones that come as they are, and running any of them.
         &[
+            Self::Buy(FlatRide::Carousel),
+            Self::Buy(FlatRide::FerrisWheel),
+            Self::Buy(FlatRide::HauntedHouse),
+            Self::Buy(FlatRide::TeaCups),
             Self::TestRide,
             Self::OpenRide,
             Self::CloseRide,
@@ -110,6 +129,17 @@ impl Tool {
         // keyboard is the number row, the arrows, space and escape — and all of
         // those are spoken for.
         &[Self::Save, Self::Load],
+        // 9: things to look at.
+        &[
+            Self::Plant(Scenery::Tree),
+            Self::Plant(Scenery::Flowerbed),
+            Self::Plant(Scenery::Fountain),
+            Self::Plant(Scenery::Lamp),
+            Self::Uproot,
+        ],
+        // 0: the money. Last on the row and last in the list, because the
+        // number row runs 1 to 9 and then round to 0.
+        &[Self::Borrow, Self::Repay, Self::Advertise],
     ];
 
     /// Which toolbar this tool is on, counting from zero.
@@ -149,6 +179,22 @@ impl Tool {
         let kit = Self::KITS[self.kit()];
         let at = kit.iter().position(|tool| *tool == self).unwrap_or(0);
         kit[(at + 1) % kit.len()]
+    }
+
+    /// What flat ride it is buying, if it is buying one.
+    pub const fn flat_ride(self) -> Option<FlatRide> {
+        match self {
+            Self::Buy(kind) => Some(kind),
+            _ => None,
+        }
+    }
+
+    /// What it is planting, if it is planting anything.
+    pub const fn scenery(self) -> Option<Scenery> {
+        match self {
+            Self::Plant(scenery) => Some(scenery),
+            _ => None,
+        }
     }
 
     /// What piece of track it is laying, if it is laying one.
@@ -221,6 +267,24 @@ impl Tool {
             Self::DemolishRide => "Demolish the ride".to_owned(),
             Self::Save => format!("Save the park to {}", crate::save::DEFAULT_PATH),
             Self::Load => format!("Load {}", crate::save::DEFAULT_PATH),
+            Self::Plant(scenery) => {
+                format!(
+                    "Plant {} ({})",
+                    scenery.name().to_lowercase(),
+                    scenery.cost()
+                )
+            }
+            Self::Uproot => "Take the scenery down".to_owned(),
+            Self::Borrow => format!("Borrow {} from the bank", Park::LOAN_STEP),
+            Self::Repay => format!("Pay {} off the loan", Park::LOAN_STEP),
+            Self::Advertise => format!("Advertise the park ({})", Campaign::COST),
+            Self::Buy(kind) => format!(
+                "Buy a {} ({}, {} by {})",
+                kind.name().to_lowercase(),
+                kind.cost(),
+                kind.footprint(),
+                kind.footprint()
+            ),
         }
     }
 }
@@ -316,6 +380,26 @@ mod tests {
         assert_eq!(Tool::Inspect.terrain(), None);
         assert_eq!(Tool::Raise.terrain(), None);
         assert_eq!(Tool::Lay(Terrain::Path).terrain(), Some(Terrain::Path));
+    }
+
+    #[test]
+    fn every_flat_ride_is_in_the_cycle() {
+        for kind in FlatRide::ALL {
+            assert!(
+                all_tools().contains(&Tool::Buy(kind)),
+                "{kind:?} cannot be bought with the mouse"
+            );
+        }
+    }
+
+    #[test]
+    fn everything_that_can_be_planted_is_in_the_cycle() {
+        for scenery in Scenery::ALL {
+            assert!(
+                all_tools().contains(&Tool::Plant(scenery)),
+                "{scenery:?} cannot be planted with the mouse"
+            );
+        }
     }
 
     #[test]

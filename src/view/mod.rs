@@ -7,6 +7,7 @@ mod facility;
 mod guest;
 mod land;
 mod ride;
+mod scenery;
 mod staff;
 
 use isogrid::camera::Camera;
@@ -60,6 +61,7 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
     ride::draw_rides(canvas, park, camera);
+    scenery::draw_scenery(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
     staff::draw_staff(canvas, park, camera);
 
@@ -93,7 +95,17 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         // says rather than where the pointer is; and a save has nothing to do
         // with the tile under the pointer at all. None of them has a yes or a
         // no to show.
-        Tool::Inspect | Tool::Track(_) | Tool::Unlay | Tool::Save | Tool::Load => return HIGHLIGHT,
+        // Nothing here has a yes or a no to show for the tile under the
+        // pointer: looking changes nothing, track goes where the layout says,
+        // and the bank and the billboards are not on the map at all.
+        Tool::Inspect
+        | Tool::Track(_)
+        | Tool::Unlay
+        | Tool::Save
+        | Tool::Load
+        | Tool::Borrow
+        | Tool::Repay
+        | Tool::Advertise => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
         Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
         // Hiring happens at the gate, so every tile is as good as any other;
@@ -106,6 +118,9 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         Tool::TestRide | Tool::OpenRide | Tool::CloseRide | Tool::DemolishRide => {
             park.ride_at(tile).is_some()
         }
+        Tool::Buy(kind) => park.can_buy_a_ride(tile, kind),
+        Tool::Plant(scenery) => park.can_plant(tile, scenery),
+        Tool::Uproot => park.scenery_at(tile).is_some(),
     };
 
     if allowed {
@@ -149,6 +164,26 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         park.average_happiness().map_or_else(
             || "Happiness: —".to_owned(),
             |happiness| format!("Happiness: {:.0}%", happiness * 100.0),
+        ),
+        format!(
+            "Rating: {} of {}",
+            park.rating().rating,
+            crate::park::Rating::BEST
+        ),
+        format!("Value: {}", park.value()),
+        if park.loan() > 0 {
+            format!("Loan: {} ({} a bill)", park.loan(), park.interest())
+        } else {
+            "Loan: none".to_owned()
+        },
+        park.campaign().map_or_else(
+            || "Not advertising".to_owned(),
+            |campaign| format!("Advertising: {} ticks left", campaign.ticks_left()),
+        ),
+        format!(
+            "Objective: {} — {}",
+            park.objective().describe(),
+            park.outcome().name()
         ),
         format!("Tick: {}", park.tick().get()),
         format!("Zoom: {:.2}x", camera.zoom()),

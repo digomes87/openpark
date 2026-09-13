@@ -67,12 +67,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   version is refused rather than half-read. `--save` and `--load` on the command
   line, and toolbar 8 in the game.
 
+- Queues. `Terrain::Queue` is a path that only leads to a ride; `Queue` is the
+  line waiting for one, and `queue::line_from` works out where that line stands
+  from the path that was laid. Guests walk to the back, shuffle up as the front
+  boards, and give up if it never moves. A line holds as many as there is path
+  for it.
+
+- Scenery: trees, flowerbeds, fountains and lamps, on toolbar 9. Paid for once,
+  kept for a wage bill, and blocking the tile they stand on.
+- `Park::rating` and `Park::value`. Value is what is standing on the land; rating
+  is what a visitor would say — how much there is to do, how the place looks, how
+  worn it is, and how the crowd inside feels. Beauty is counted around the paths
+  people walk, so scenery nobody sees does nothing for it.
+- Arrivals follow the rating rather than a fixed clock: a park nobody has heard
+  of fills at a guest every 90 ticks, one everybody is talking about at one every
+  22.
+
+- Flat rides: a carousel, a ferris wheel, a haunted house and teacups, on
+  toolbar 0. `Ride` now holds a `Layout` — track with trains, or a machine on its
+  own square of land — so both kinds queue, price, wear out and break down the
+  same way.
+- Guests have a nerve as well as a wallet, and refuse anything rougher than they
+  are brave. `RideStats::category` calls a ride gentle, thrill or extreme.
+
+- A bank: `Park::borrow` and `Park::repay`, capped at 20,000, with interest
+  charged on what is owed at every wage bill.
+- Marketing: `Park::advertise` buys a campaign that lends the park a reputation
+  it has not earned while it runs, which is what the gate goes by
+  (`Park::regard`).
+- An objective: a hundred guests at once and a rating of 600 by tick 40,000.
+  `Park::outcome` is won, lost or pending; bankruptcy loses on the spot, and
+  winning sticks.
+- Toolbar 0 is the money; the flat rides moved onto toolbar 7 beside running
+  them.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and
   `Park::demolish` returns the `Shop` that was standing there.
 - `Guest::enjoy` takes the `Shop` being used rather than a `Facility`, so it pays
   the price on that shop's board.
+- `Ride::track` returns an `Option`, since a flat ride has none, and
+  `Ride::tiles` / `Ride::stations` answer for both kinds.
 - Walking is shared: `Walk` holds the route and the position for both guests and
   staff, and `Guest` delegates to it.
 - `Park` holds a `Land` rather than a bare terrain grid; `Park::terrain` still

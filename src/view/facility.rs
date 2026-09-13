@@ -90,11 +90,22 @@ pub fn describe(park: &Park, tile: TilePos) -> String {
         );
 
         return format!(
-            "{} — {:?}, {} each, {stats}, {} ridden",
+            "{} — {:?}, {} each, {stats}, {} ridden, {} queueing",
             ride.name(),
             ride.state(),
             ride.price(),
-            ride.riders()
+            ride.riders(),
+            ride.queue().len()
+        );
+    }
+
+    if let Some(scenery) = park.scenery_at(tile) {
+        return format!(
+            "{} at {}, {} — {} to keep",
+            scenery.name(),
+            tile.x,
+            tile.y,
+            scenery.upkeep()
         );
     }
 

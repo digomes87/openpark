@@ -5,12 +5,18 @@ mod build;
 mod crowd;
 mod day;
 mod facility;
+mod finance;
 #[cfg(test)]
 mod fixtures;
+mod flat;
+mod goal;
 mod guest;
 mod land;
 mod needs;
+mod queue;
+mod rating;
 mod ride;
+mod scenery;
 mod shop;
 mod staff;
 mod terrain;
@@ -18,10 +24,16 @@ mod track;
 mod walk;
 
 pub use facility::Facility;
+pub use finance::Campaign;
+pub use flat::FlatRide;
+pub use goal::{Objective, Outcome};
 pub use guest::{Guest, Plan};
 pub use land::Land;
 pub use needs::Needs;
-pub use ride::{Ride, RideState, RideStats, TestFailure, Train};
+pub use queue::Queue;
+pub use rating::Rating;
+pub use ride::{Category, Layout, Ride, RideState, RideStats, TestFailure, Train};
+pub use scenery::Scenery;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
@@ -51,6 +63,7 @@ pub struct Park {
     name: String,
     land: Land,
     facilities: Grid<Option<Shop>>,
+    scenery: Grid<Option<Scenery>>,
     guests: Vec<Guest>,
     staff: Vec<Staff>,
     rides: Vec<Ride>,
@@ -68,6 +81,19 @@ pub struct Park {
     next_ride_id: u32,
     /// When the park ran out of credit, if it has.
     bankrupt_since: Option<Tick>,
+    /// What the park owes the bank.
+    loan: Money,
+    /// The marketing campaign that is running, if one is.
+    campaign: Option<Campaign>,
+    /// What the park has been asked to do.
+    objective: Objective,
+    /// Whether it has managed it.
+    outcome: Outcome,
+    /// What people thought of the park when it last asked.
+    ///
+    /// Cached rather than computed on demand because the gate consults it every
+    /// tick, and working it out walks the whole map.
+    reputation: u32,
 }
 
 impl Park {
@@ -101,12 +127,25 @@ impl Park {
     /// bounded by this times [`Track::MAX_PIECES`].
     pub const MAX_RIDES: usize = 32;
 
-    /// How many ticks pass between arrivals.
+    /// How long between arrivals at a park nobody has heard anything good
+    /// about, and at one everybody has.
     ///
-    /// At [`isogrid::time::TickRate::CLASSIC`] that is a guest every second and
-    /// a half, so a new park fills up over a few minutes rather than all at
-    /// once.
-    const TICKS_BETWEEN_ARRIVALS: u64 = 60;
+    /// Word of mouth is the only advertising a park has. A park that has been
+    /// open a while and is looking after its crowd sits in the middle of this
+    /// range — about a guest every second and a half at
+    /// [`isogrid::time::TickRate::CLASSIC`] — so building something worth
+    /// queueing for is what makes the gate busier than that, and letting the
+    /// place go to seed is what makes it quieter.
+    pub const SLOWEST_ARRIVALS: u64 = 90;
+
+    /// How long between arrivals at a park everybody is talking about.
+    pub const FASTEST_ARRIVALS: u64 = 22;
+
+    /// How often the park works out what people think of it.
+    ///
+    /// Not every tick: the rating walks every path tile against every piece of
+    /// scenery, and nobody's opinion changes in a fortieth of a second.
+    const TICKS_PER_RATING: u64 = 300;
 
     /// How far a guest walks each tick on open path, in tiles.
     ///
@@ -137,6 +176,18 @@ impl Park {
 
     /// How much mood a guest loses per tick of standing on worn-out ground.
     const DIRT_IS_DREARY: f32 = 1.0 / 4_000.0;
+
+    /// How much faster somebody shuffling up a queue moves than somebody
+    /// walking across the park.
+    ///
+    /// A queue that advances at strolling pace empties a train's worth of seats
+    /// slower than the train can carry them, so the ride spends its day
+    /// half-full with a line out of the gate. Three tiles for every one is what
+    /// it takes for eight seats to fill inside one dwell.
+    const QUEUE_SHUFFLE: f32 = 6.0;
+
+    /// How much mood a guest loses for standing in a line and giving up on it.
+    const GAVE_UP_QUEUEING: f32 = 0.15;
 
     /// How much mood a guest gains per tick of walking near an entertainer.
     const ENTERTAINED: f32 = 1.0 / 1_500.0;
@@ -210,11 +261,14 @@ impl Park {
 
         let facilities = Grid::filled(width, height, None)
             .context("the park is too small or too large for the engine to hold")?;
+        let scenery = Grid::filled(width, height, None)
+            .context("the park is too small or too large for the engine to hold")?;
 
         let mut park = Self {
             name: name.into(),
             land: Land::rolling(terrain, &mut rng)?,
             facilities,
+            scenery,
             guests: Vec::new(),
             staff: Vec::new(),
             rides: Vec::new(),
@@ -226,6 +280,11 @@ impl Park {
             next_staff_id: 0,
             next_ride_id: 0,
             bankrupt_since: None,
+            loan: 0,
+            campaign: None,
+            objective: Objective::standard(),
+            outcome: Outcome::Pending,
+            reputation: 0,
         };
 
         park.open_with_the_basics();
@@ -277,6 +336,16 @@ impl Park {
     /// What has been built on it.
     pub const fn facilities(&self) -> &Grid<Option<Shop>> {
         &self.facilities
+    }
+
+    /// Everything put up to be looked at.
+    pub const fn scenery(&self) -> &Grid<Option<Scenery>> {
+        &self.scenery
+    }
+
+    /// The scenery on one tile, if there is any.
+    pub fn scenery_at(&self, tile: TilePos) -> Option<Scenery> {
+        self.scenery.get(tile).copied().flatten()
     }
 
     /// What stands on one tile, if anything does.
@@ -382,9 +451,20 @@ impl Park {
         self.rides.iter().find(|ride| ride.id() == id)
     }
 
-    /// Whichever ride has track on `tile`, if any has.
+    /// Whether `tile` is free for somebody to stand on.
+    ///
+    /// Walkable ground with nothing built, planted or running on it. What the
+    /// pathfinder decides for a route, asked one tile at a time.
+    pub fn is_standing_room(&self, tile: TilePos) -> bool {
+        self.land.ground(tile).is_some_and(Terrain::is_walkable)
+            && self.facility_at(tile).is_none()
+            && self.scenery_at(tile).is_none()
+            && self.ride_at(tile).is_none()
+    }
+
+    /// Whichever ride stands on `tile`, if any does.
     pub fn ride_at(&self, tile: TilePos) -> Option<&Ride> {
-        self.rides.iter().find(|ride| ride.track().occupies(tile))
+        self.rides.iter().find(|ride| ride.occupies(tile))
     }
 }
 
@@ -465,29 +545,84 @@ mod tests {
 
     #[test]
     fn guests_arrive_at_the_gate_and_pay_to_get_in() {
-        let park = opened_for(Park::TICKS_BETWEEN_ARRIVALS);
-        assert_eq!(park.guests().len(), 1);
-        assert_eq!(park.cash(), Park::STARTING_CASH + Park::ADMISSION);
-        assert_eq!(park.guests()[0].tile(), park.entrance());
+        // However quiet the park is, somebody has turned up by the time the
+        // slowest gate would have let one in.
+        let park = opened_for(Park::SLOWEST_ARRIVALS);
+        let arrived = park.guests().len();
+
+        assert!(arrived > 0, "nobody came through the gate");
+        assert_eq!(
+            park.cash(),
+            Park::STARTING_CASH + Park::ADMISSION * Money::try_from(arrived).unwrap(),
+            "somebody got in without paying"
+        );
+        assert!(park
+            .guests()
+            .iter()
+            .any(|guest| guest.tile() == park.entrance()));
     }
 
     #[test]
-    fn guests_keep_arriving_at_a_steady_rate() {
-        let park = opened_for(Park::TICKS_BETWEEN_ARRIVALS * 5);
-        assert_eq!(park.guests().len(), 5);
-        assert_eq!(park.cash(), Park::STARTING_CASH + Park::ADMISSION * 5);
+    fn guests_keep_arriving() {
+        let early = opened_for(Park::SLOWEST_ARRIVALS * 2).guests().len();
+        let later = opened_for(Park::SLOWEST_ARRIVALS * 8).guests().len();
+
+        assert!(early > 0, "nobody came at all");
+        assert!(later > early, "the gate stopped after {early}");
+    }
+
+    #[test]
+    fn a_park_worth_visiting_fills_faster_than_one_that_is_not() {
+        // The same park, told two different things about itself: the gate goes
+        // by what people think of the place, and nothing else.
+        let mut liked = Park::new("Liked", 32, 32, 5).unwrap();
+        let mut ignored = Park::new("Ignored", 32, 32, 5).unwrap();
+
+        for _ in 0..3_000 {
+            liked.reputation = Rating::BEST;
+            liked.tick_once();
+
+            ignored.reputation = 0;
+            ignored.tick_once();
+        }
+
+        assert!(
+            liked.guests().len() > ignored.guests().len(),
+            "{} turned up to the park everybody likes against {} to the one \
+             nobody has heard of",
+            liked.guests().len(),
+            ignored.guests().len()
+        );
     }
 
     #[test]
     fn the_park_stops_letting_people_in_when_it_is_full() {
-        let ticks = Park::TICKS_BETWEEN_ARRIVALS * (Park::CAPACITY as u64 + 10);
-        let park = opened_for(ticks);
-        assert_eq!(park.guests().len(), Park::CAPACITY);
+        // Checked every tick rather than at the end: guests leave as well as
+        // arrive, so a park at its limit does not sit at exactly its limit —
+        // what matters is that the gate never lets it past one.
+        let mut park = Park::new("Busy", 32, 32, 5).unwrap();
+        let mut fullest = 0;
+        for _ in 0..Park::SLOWEST_ARRIVALS * (Park::CAPACITY as u64 + 30) {
+            park.tick_once();
+            fullest = fullest.max(park.guests().len());
+            assert!(
+                park.guests().len() <= Park::CAPACITY,
+                "{} guests in a park that holds {}",
+                park.guests().len(),
+                Park::CAPACITY
+            );
+        }
+
+        assert!(
+            fullest > Park::CAPACITY * 3 / 4,
+            "the park only ever got to {fullest} of {}",
+            Park::CAPACITY
+        );
     }
 
     #[test]
     fn every_guest_has_an_id_of_their_own() {
-        let park = opened_for(Park::TICKS_BETWEEN_ARRIVALS * 12);
+        let park = opened_for(Park::SLOWEST_ARRIVALS * 12);
         let mut ids: Vec<_> = park.guests().iter().map(Guest::id).collect();
         ids.sort_unstable();
         ids.dedup();
@@ -496,7 +631,7 @@ mod tests {
 
     #[test]
     fn guests_walk_away_from_the_gate() {
-        let park = opened_for(Park::TICKS_BETWEEN_ARRIVALS + 400);
+        let park = opened_for(Park::SLOWEST_ARRIVALS + 400);
         let wandered = park
             .guests()
             .iter()

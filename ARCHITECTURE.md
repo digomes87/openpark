@@ -26,7 +26,12 @@ src/
 │   ├── day.rs         one tick: the gate, the crowd, the trains, the books
 │   ├── build.rs       changing the park: what it costs and why it is refused
 │   ├── books.rs       the money: wages, upkeep, and running out of it
+│   ├── finance.rs     the bank and the billboards: loans and campaigns
+│   ├── goal.rs        what the park is trying to do, and whether it did it
 │   ├── crowd.rs       how the crowd finds its way about
+│   ├── queue.rs       the line for a ride: an order, and where it stands
+│   ├── scenery.rs     things put up to be looked at rather than used
+│   ├── rating.rs      what the park is worth, and what people think of it
 │   ├── terrain.rs     Terrain: what the ground is and what it costs to cross
 │   ├── land.rs        Land: the two grids of ground and height, and its rules
 │   ├── facility.rs    Facility: what a kind of stall or bench is like
@@ -35,7 +40,8 @@ src/
 │   ├── needs.rs       Needs: hunger, energy and mood, and nothing else
 │   ├── staff.rs       Staff: somebody on the payroll, and the job they do
 │   ├── track.rs       Track: the shape a ride is built out of
-│   ├── ride.rs        Ride: trains, physics, test runs and what it is worth
+│   ├── ride.rs        Ride: a layout, trains, test runs, and what it is worth
+│   ├── flat.rs        FlatRide: the rides that come as they are
 │   └── walk.rs        Walk: a route and a position, shared by both of them
 ├── view/          drawing, entirely through isogrid::render::Renderer
 │   ├── mod.rs         the frame: sky, land, hover highlight, HUD
@@ -43,6 +49,7 @@ src/
 │   ├── facility.rs    what is built, and the label for the hovered tile
 │   ├── guest.rs       the crowd
 │   ├── ride.rs        rails, supports, trains and platforms
+│   ├── scenery.rs     a stem and a crown, per planted tile
 │   └── staff.rs       the payroll
 ├── app.rs         OpenPark: state, controls, and what a tick means
 ├── tool.rs        Tool: what the mouse does when you click
