@@ -99,6 +99,16 @@ pub fn describe(park: &Park, tile: TilePos) -> String {
         );
     }
 
+    if let Some(scenery) = park.scenery_at(tile) {
+        return format!(
+            "{} at {}, {} — {} to keep",
+            scenery.name(),
+            tile.x,
+            tile.y,
+            scenery.upkeep()
+        );
+    }
+
     if let Some(member) = park.staff().iter().find(|member| member.tile() == tile) {
         return format!(
             "{} at {}, {} — {} a bill",

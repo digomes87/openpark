@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::{Heading, Park, Terrain, TrackPiece};
+use crate::park::{Heading, Park, Scenery, Terrain, TrackPiece};
 
 /// How far out from the crossroads the coaster is laid.
 const OFFSET: i32 = 2;
@@ -70,12 +70,46 @@ pub fn coaster(park: &mut Park) -> Result<u32> {
     }
 
     queue_for(park, id).context("the demo coaster has nowhere to queue")?;
+    plant_around(park);
 
     park.test_ride(id).context("the demo coaster stalls")?;
     park.open_ride(id)
         .context("the demo coaster will not open")?;
 
     Ok(id)
+}
+
+/// Plants a row of scenery along the crossroads, where the crowd walks.
+///
+/// Where it is looked at, in other words: the rating counts beauty around paths
+/// rather than beauty anywhere, so scenery in the corner of the map would be a
+/// picture of the feature not working.
+///
+/// Whatever lands in the lake or under the coaster is simply skipped: this is
+/// decoration, and a demo park that refused to build because one flowerbed had
+/// nowhere to go would be no demo at all.
+fn plant_around(park: &mut Park) {
+    #[allow(clippy::cast_possible_wrap)]
+    let middle = park.height() as i32 / 2;
+
+    for x in 0..park.width() {
+        #[allow(clippy::cast_possible_wrap)]
+        let x = x as i32;
+        if x % 3 != 0 {
+            continue;
+        }
+
+        // Either side of the path across the park, and never mind the ones that
+        // land in the lake or under the coaster.
+        for tile in [TilePos::new(x, middle - 1), TilePos::new(x, middle + 1)] {
+            let planted = if x % 6 == 0 {
+                Scenery::Tree
+            } else {
+                Scenery::Flowerbed
+            };
+            let _ = park.plant(tile, planted);
+        }
+    }
 }
 
 /// Lays a queue path leading away from a ride's station.

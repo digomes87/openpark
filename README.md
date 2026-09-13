@@ -52,6 +52,15 @@ ride that stalls does not open. What the test run finds becomes the ride's
 excitement and intensity, which is what decides both how much guests enjoy it and
 how much they will pay for it.
 
+![Trees and flowerbeds along the paths, a queue of guests filing towards a
+coaster, and a park rating of 468 out of 1000](docs/images/scenery.png)
+
+Trees, flowerbeds, fountains and lamps are worth putting up because the park is
+judged on them — and judged where people actually walk, so a forest planted in a
+corner nobody visits does nothing. The rating is what decides how busy the gate
+gets: word of mouth is the only advertising a park has, and a park nobody has
+heard of fills four times slower than one everybody is talking about.
+
 Guests queue properly: they walk to the back of the line, shuffle up it as the
 front boards, and give up in a worse mood than they joined in if it never moves.
 A line holds as many people as there is queue path to stand on, so laying more of
@@ -99,7 +108,7 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `1` – `8` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves |
+| `1` – `9` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves, scenery |
 | `Space` | Walk along the toolbar in hand |
 | Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |

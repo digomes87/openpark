@@ -10,7 +10,7 @@ use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
 use crate::park::{
-    Facility, Heading, Land, Money, Park, Ride, RideStats, Segment, Shop, Terrain, Track,
+    Facility, Heading, Land, Money, Park, Ride, RideStats, Scenery, Segment, Shop, Terrain, Track,
     TrackPiece,
 };
 
@@ -178,6 +178,10 @@ impl Park {
             self.ride_at(tile).is_none(),
             "there is track across {tile:?}",
         );
+        anyhow::ensure!(
+            self.scenery_at(tile).is_none(),
+            "there is scenery on {tile:?}",
+        );
 
         Ok(())
     }
@@ -186,6 +190,93 @@ impl Park {
     pub(super) fn put_up(&mut self, tile: TilePos, facility: Facility) -> Result<()> {
         self.check_ground(tile, facility)?;
         self.facilities.replace(tile, Some(Shop::new(facility)));
+        Ok(())
+    }
+
+    /// Puts up a piece of scenery, taking its cost out of the bank.
+    ///
+    /// # Errors
+    ///
+    /// Fails if the park is bankrupt or cannot pay, the tile is outside it, the
+    /// ground will not take it, or something is already standing there —
+    /// including a guest, since scenery blocks the tile it stands on and a guest
+    /// planted under a tree has nowhere to go.
+    ///
+    /// ```
+    /// # use openpark::park::{Park, Scenery};
+    /// # use isogrid::iso::TilePos;
+    /// let mut park = Park::new("Forest Frontiers", 32, 32, 1)?;
+    /// let before = park.cash();
+    /// let tile = TilePos::new(3, 3);
+    ///
+    /// park.plant(tile, Scenery::Tree)?;
+    /// assert_eq!(park.scenery_at(tile), Some(Scenery::Tree));
+    /// assert_eq!(park.cash(), before - Scenery::Tree.cost());
+    /// assert!(park.plant(tile, Scenery::Tree).is_err(), "it is taken");
+    /// # Ok::<(), anyhow::Error>(())
+    /// ```
+    pub fn plant(&mut self, tile: TilePos, scenery: Scenery) -> Result<()> {
+        self.check_planting(tile, scenery)?;
+
+        self.scenery.replace(tile, Some(scenery));
+        self.adjust_cash(-scenery.cost());
+        Ok(())
+    }
+
+    /// Whether [`Park::plant`] would be allowed here, for a cursor that wants to
+    /// say so before the click.
+    pub fn can_plant(&self, tile: TilePos, scenery: Scenery) -> bool {
+        self.check_planting(tile, scenery).is_ok()
+    }
+
+    /// Takes a piece of scenery down again, returning what was there.
+    pub fn uproot(&mut self, tile: TilePos) -> Option<Scenery> {
+        self.scenery.replace(tile, None).flatten()
+    }
+
+    /// Why a tile will not take scenery.
+    fn check_planting(&self, tile: TilePos, scenery: Scenery) -> Result<()> {
+        anyhow::ensure!(
+            !self.is_bankrupt(),
+            "the park is bankrupt and cannot buy anything",
+        );
+        anyhow::ensure!(
+            self.cash >= scenery.cost(),
+            "a {} costs {} and the park has {}",
+            scenery.name().to_lowercase(),
+            scenery.cost(),
+            self.cash,
+        );
+        anyhow::ensure!(
+            self.scenery_at(tile).is_none(),
+            "there is already a {} on {tile:?}",
+            self.scenery_at(tile).map_or("something", Scenery::name),
+        );
+        anyhow::ensure!(
+            !self.is_anybody_on(tile),
+            "somebody is standing on {tile:?}",
+        );
+
+        self.check_ground_for_scenery(tile)
+    }
+
+    /// Why the ground on `tile` will not take scenery, money aside.
+    fn check_ground_for_scenery(&self, tile: TilePos) -> Result<()> {
+        let ground = self
+            .land
+            .ground(tile)
+            .with_context(|| format!("{tile:?} is outside the park"))?;
+
+        anyhow::ensure!(ground.is_buildable(), "nothing will grow on {ground:?}");
+        anyhow::ensure!(
+            self.facility_at(tile).is_none(),
+            "there is already something on {tile:?}",
+        );
+        anyhow::ensure!(
+            self.ride_at(tile).is_none(),
+            "there is track across {tile:?}",
+        );
+
         Ok(())
     }
 
@@ -382,6 +473,11 @@ impl Park {
                 || self.land.ground(tile) == Some(Terrain::Path),
             "track cannot be built on {:?}",
             self.land.ground(tile),
+        );
+
+        anyhow::ensure!(
+            self.scenery_at(tile).is_none(),
+            "there is scenery on {tile:?}",
         );
 
         let somebody_elses = self
@@ -705,7 +801,7 @@ mod tests {
 
     #[test]
     fn the_land_cannot_be_moved_under_somebody_standing_on_it() {
-        let mut park = opened_for(Park::TICKS_BETWEEN_ARRIVALS);
+        let mut park = opened_for(Park::SLOWEST_ARRIVALS);
         let standing_on = park.guests()[0].tile();
 
         assert!(

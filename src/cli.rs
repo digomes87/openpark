@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::{Facility, StaffKind, Terrain};
+use crate::park::{Facility, Scenery, StaffKind, Terrain};
 use crate::tool::Tool;
 
 /// How the game was asked to start.
@@ -67,7 +67,8 @@ openpark — a park simulator
                         tools to it
     --tool NAME         inspect, stall, bench, demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
-                        dig, path, queue, grass, dirt or water
+                        dig, path, queue, grass, dirt, water, tree,
+                        flowerbed, fountain, lamp or uproot
     -h, --help          print this
 ";
 
@@ -190,6 +191,11 @@ fn tool(value: &str) -> Result<Tool> {
         "dig" => Ok(Tool::Lower),
         "path" => Ok(Tool::Lay(Terrain::Path)),
         "queue" => Ok(Tool::Lay(Terrain::Queue)),
+        "tree" => Ok(Tool::Plant(Scenery::Tree)),
+        "flowerbed" => Ok(Tool::Plant(Scenery::Flowerbed)),
+        "fountain" => Ok(Tool::Plant(Scenery::Fountain)),
+        "lamp" => Ok(Tool::Plant(Scenery::Lamp)),
+        "uproot" => Ok(Tool::Uproot),
         "grass" => Ok(Tool::Lay(Terrain::Grass)),
         "dirt" => Ok(Tool::Lay(Terrain::Dirt)),
         "water" => Ok(Tool::Lay(Terrain::Water)),

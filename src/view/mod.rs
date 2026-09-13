@@ -7,6 +7,7 @@ mod facility;
 mod guest;
 mod land;
 mod ride;
+mod scenery;
 mod staff;
 
 use isogrid::camera::Camera;
@@ -60,6 +61,7 @@ pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
     land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
     ride::draw_rides(canvas, park, camera);
+    scenery::draw_scenery(canvas, park, camera);
     guest::draw_guests(canvas, park, camera);
     staff::draw_staff(canvas, park, camera);
 
@@ -106,6 +108,8 @@ fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
         Tool::TestRide | Tool::OpenRide | Tool::CloseRide | Tool::DemolishRide => {
             park.ride_at(tile).is_some()
         }
+        Tool::Plant(scenery) => park.can_plant(tile, scenery),
+        Tool::Uproot => park.scenery_at(tile).is_some(),
     };
 
     if allowed {
@@ -150,6 +154,12 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
             || "Happiness: —".to_owned(),
             |happiness| format!("Happiness: {:.0}%", happiness * 100.0),
         ),
+        format!(
+            "Rating: {} of {}",
+            park.rating().rating,
+            crate::park::Rating::BEST
+        ),
+        format!("Value: {}", park.value()),
         format!("Tick: {}", park.tick().get()),
         format!("Zoom: {:.2}x", camera.zoom()),
         under_pointer,

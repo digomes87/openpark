@@ -13,7 +13,9 @@ use crate::park::crowd::{
     nearest_facility, nearest_ride, wander, wears_from_here, ParkMap, Wanted,
 };
 use crate::park::queue;
-use crate::park::{Facility, Guest, Money, Park, Plan, Queue, Ride, RideState, StaffKind, Terrain};
+use crate::park::{
+    Facility, Guest, Money, Park, Plan, Queue, Rating, Ride, RideState, StaffKind, Terrain,
+};
 
 impl Park {
     /// Advances the park by exactly one tick.
@@ -46,6 +48,10 @@ impl Park {
         self.wear_and_tear();
         self.walk_the_staff();
         self.do_the_rounds();
+
+        if self.tick.is_multiple_of(Self::TICKS_PER_RATING) {
+            self.reputation = self.rating().rating;
+        }
 
         if self.tick.is_multiple_of(Self::TICKS_PER_WAGE_BILL) {
             self.pay_the_bills();
@@ -173,6 +179,7 @@ impl Park {
                 let map = ParkMap {
                     land: &self.land,
                     facilities: &self.facilities,
+                    scenery: &self.scenery,
                 };
                 let mut finder = PathFinder::new();
                 if let Some(route) = finder.find(&map, guest.tile(), standing) {
@@ -334,12 +341,17 @@ impl Park {
         let Self {
             land,
             facilities,
+            scenery,
             staff,
             rng,
             ..
         } = self;
 
-        let map = ParkMap { land, facilities };
+        let map = ParkMap {
+            land,
+            facilities,
+            scenery,
+        };
         let mut finder = PathFinder::new();
 
         for member in staff.iter_mut() {
@@ -444,9 +456,22 @@ impl Park {
         }
     }
 
+    /// How many ticks pass between arrivals, given what people think of the
+    /// park.
+    ///
+    /// A park nobody has heard anything good about fills slowly; one with rides
+    /// worth queueing for and something to look at between them fills ten times
+    /// faster. It is the only advertising there is.
+    fn how_often_people_turn_up(&self) -> u64 {
+        let spread = Self::SLOWEST_ARRIVALS - Self::FASTEST_ARRIVALS;
+        let word_of_mouth = u64::from(self.reputation) * spread / u64::from(Rating::BEST);
+
+        Self::SLOWEST_ARRIVALS.saturating_sub(word_of_mouth)
+    }
+
     /// Lets one guest in, if one is due and there is room.
     fn admit_a_guest(&mut self) {
-        if !self.tick.is_multiple_of(Self::TICKS_BETWEEN_ARRIVALS)
+        if !self.tick.is_multiple_of(self.how_often_people_turn_up())
             || self.guests.len() >= Self::CAPACITY
         {
             return;
@@ -479,13 +504,18 @@ impl Park {
             let Self {
                 land,
                 facilities,
+                scenery,
                 guests,
                 rides,
                 rng,
                 ..
             } = self;
 
-            let map = ParkMap { land, facilities };
+            let map = ParkMap {
+                land,
+                facilities,
+                scenery,
+            };
 
             // Allocates nothing until a guest actually needs a route, and reuses
             // its buffers across everyone who does.
@@ -738,6 +768,7 @@ mod tests {
             let map = ParkMap {
                 land: &park.land,
                 facilities: &park.facilities,
+                scenery: &park.scenery,
             };
             assert!(
                 finder.find(&map, below, ramp).is_some(),
@@ -750,6 +781,7 @@ mod tests {
         let map = ParkMap {
             land: &park.land,
             facilities: &park.facilities,
+            scenery: &park.scenery,
         };
         assert!(
             finder.find(&map, below, ramp).is_none(),
