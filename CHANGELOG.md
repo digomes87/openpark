@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   boards, and give up if it never moves. A line holds as many as there is path
   for it.
 
+- Scenery: trees, flowerbeds, fountains and lamps, on toolbar 9. Paid for once,
+  kept for a wage bill, and blocking the tile they stand on.
+- `Park::rating` and `Park::value`. Value is what is standing on the land; rating
+  is what a visitor would say — how much there is to do, how the place looks, how
+  worn it is, and how the crowd inside feels. Beauty is counted around the paths
+  people walk, so scenery nobody sees does nothing for it.
+- Arrivals follow the rating rather than a fixed clock: a park nobody has heard
+  of fills at a guest every 90 ticks, one everybody is talking about at one every
+  22.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and
