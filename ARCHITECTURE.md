@@ -22,7 +22,11 @@ what `Terrain::Water` is; this crate implements it and supplies the costs.
 ```text
 src/
 ├── park/          the simulation
-│   ├── mod.rs         Park: the land, the money, the payroll, the tick
+│   ├── mod.rs         Park: what a park is, and what it is made of
+│   ├── day.rs         one tick: the gate, the crowd, the trains, the books
+│   ├── build.rs       changing the park: what it costs and why it is refused
+│   ├── books.rs       the money: wages, upkeep, and running out of it
+│   ├── crowd.rs       how the crowd finds its way about
 │   ├── terrain.rs     Terrain: what the ground is and what it costs to cross
 │   ├── land.rs        Land: the two grids of ground and height, and its rules
 │   ├── facility.rs    Facility: what a kind of stall or bench is like
