@@ -126,10 +126,15 @@ pub fn describe(park: &Park, tile: TilePos) -> String {
         format!(" — {steps} steps up")
     };
 
+    let rubbish = match park.litter_at(tile) {
+        0 => String::new(),
+        on => format!(" — {on} bits of litter"),
+    };
+
     park.shop_at(tile).map_or_else(
         || {
             format!(
-                "{} at {}, {}{height}",
+                "{} at {}, {}{height}{rubbish}",
                 park.terrain()[tile].name(),
                 tile.x,
                 tile.y

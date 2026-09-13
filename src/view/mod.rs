@@ -171,6 +171,7 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
             crate::park::Rating::BEST
         ),
         format!("Value: {}", park.value()),
+        format!("Litter: {}", park.rubbish()),
         if park.loan() > 0 {
             format!("Loan: {} ({} a bill)", park.loan(), park.interest())
         } else {

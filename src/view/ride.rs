@@ -238,6 +238,7 @@ mod tests {
         for dy in 0..6 {
             for dx in 0..6 {
                 let tile = corner.offset(dx, dy);
+                park.demolish(tile);
                 park.lay(tile, Terrain::Grass)
                     .expect("the ground should take grass");
                 while park.land().height_at(tile).unwrap_or(0) > 0 {

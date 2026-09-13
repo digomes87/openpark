@@ -78,7 +78,10 @@ impl Tool {
         // 2: stalls and benches.
         &[
             Self::Build(Facility::FoodStall),
+            Self::Build(Facility::DrinkStall),
             Self::Build(Facility::Bench),
+            Self::Build(Facility::Toilet),
+            Self::Build(Facility::Bin),
             Self::Demolish,
         ],
         // 3: what anything charges, shop or ride.
