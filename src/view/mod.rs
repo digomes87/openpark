@@ -89,10 +89,11 @@ fn draw_highlight(
 /// The colour the hovered tile is filled with, given what the pointer holds.
 fn tint(tool: Tool, park: &Park, tile: TilePos) -> Color {
     let allowed = match tool {
-        // Looking at something changes nothing, and track goes where the
-        // layout says rather than where the pointer is — neither has a yes or
-        // a no to show.
-        Tool::Inspect | Tool::Track(_) | Tool::Unlay => return HIGHLIGHT,
+        // Looking at something changes nothing; track goes where the layout
+        // says rather than where the pointer is; and a save has nothing to do
+        // with the tile under the pointer at all. None of them has a yes or a
+        // no to show.
+        Tool::Inspect | Tool::Track(_) | Tool::Unlay | Tool::Save | Tool::Load => return HIGHLIGHT,
         Tool::Build(facility) => park.can_build(tile, facility),
         Tool::Demolish | Tool::RaisePrice | Tool::LowerPrice => park.facility_at(tile).is_some(),
         // Hiring happens at the gate, so every tile is as good as any other;

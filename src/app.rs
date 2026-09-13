@@ -1,5 +1,7 @@
 //! The game loop's other half: state, controls, and what a tick means.
 
+use std::path::{Path, PathBuf};
+
 use isogrid::backend::macroquad::App;
 use isogrid::camera::{Camera, Viewport};
 use isogrid::input::{Button, Input, Key};
@@ -48,6 +50,8 @@ pub struct OpenPark {
     building: Option<u32>,
     /// Which way the next new ride's first piece will face.
     heading: Heading,
+    /// Where the save tools read and write.
+    save_path: PathBuf,
 }
 
 impl OpenPark {
@@ -82,6 +86,7 @@ impl OpenPark {
             quit: false,
             building: None,
             heading: Heading::East,
+            save_path: PathBuf::from(crate::save::DEFAULT_PATH),
         })
     }
 
@@ -108,6 +113,16 @@ impl OpenPark {
     /// What the last click did, or why it did nothing.
     pub fn status(&self) -> Option<&str> {
         self.status.as_deref()
+    }
+
+    /// Changes where the save tools read and write.
+    pub fn save_to(&mut self, path: impl Into<PathBuf>) {
+        self.save_path = path.into();
+    }
+
+    /// Where the save tools read and write.
+    pub fn save_path(&self) -> &Path {
+        &self.save_path
     }
 
     /// Picks a tool, as the space bar does.
@@ -305,6 +320,20 @@ impl OpenPark {
             Tool::OpenRide => Some(self.open_the_ride(tile)),
             Tool::CloseRide => Some(self.close_the_ride(tile)),
             Tool::DemolishRide => Some(self.demolish_the_ride(tile)),
+            Tool::Save => Some(match crate::save::save(&self.park, &self.save_path) {
+                Ok(()) => format!("Saved to {}", self.save_path.display()),
+                Err(refused) => format!("{refused:#}"),
+            }),
+            Tool::Load => Some(match crate::save::load(&self.save_path) {
+                Ok(park) => {
+                    let name = park.name().to_owned();
+                    self.park = park;
+                    self.building = None;
+                    self.pinned = None;
+                    format!("Loaded {name}")
+                }
+                Err(refused) => format!("{refused:#}"),
+            }),
         };
     }
 }
@@ -827,5 +856,71 @@ mod tests {
             .camera()
             .world_to_screen(TilePos::new(-40, -40).centre());
         assert_eq!(game.tile_under(far_away), None);
+    }
+    #[test]
+    fn the_save_tool_writes_the_park_and_the_load_tool_brings_it_back() {
+        let mut game = game();
+        let path = std::env::temp_dir().join(format!(
+            "openpark-app-save-{}.save.json",
+            std::process::id()
+        ));
+        std::fs::remove_file(&path).ok();
+        game.save_to(&path);
+
+        game.select(Tool::Save);
+        click_on(&mut game, TilePos::new(4, 4));
+        assert!(path.exists(), "the save tool wrote nothing");
+        assert!(
+            game.status().is_some_and(|status| status.contains("Saved")),
+            "the HUD did not say it saved: {:?}",
+            game.status()
+        );
+
+        // Something to lose, and then losing it.
+        let saved_at = game.park().tick();
+        for _ in 0..500 {
+            game.park.tick_once();
+        }
+        assert_ne!(
+            game.park().tick(),
+            saved_at,
+            "the park should have moved on"
+        );
+
+        game.select(Tool::Load);
+        click_on(&mut game, TilePos::new(4, 4));
+        std::fs::remove_file(&path).ok();
+
+        assert_eq!(
+            game.park().tick(),
+            saved_at,
+            "loading did not put the park back"
+        );
+        assert!(game
+            .status()
+            .is_some_and(|status| status.contains("Loaded")));
+    }
+
+    #[test]
+    fn loading_a_save_that_is_not_there_says_so_and_leaves_the_park_alone() {
+        let mut game = game();
+        let path = std::env::temp_dir().join(format!(
+            "openpark-app-missing-{}.save.json",
+            std::process::id()
+        ));
+        std::fs::remove_file(&path).ok();
+        game.save_to(&path);
+
+        let before = game.park().tick();
+        game.select(Tool::Load);
+        click_on(&mut game, TilePos::new(4, 4));
+
+        assert_eq!(game.park().tick(), before, "the park was thrown away");
+        assert!(
+            game.status()
+                .is_some_and(|status| status.contains("failed")),
+            "the HUD did not explain: {:?}",
+            game.status()
+        );
     }
 }

@@ -30,17 +30,22 @@ src/
 │   ├── guest.rs       Guest: somebody visiting, and what they are doing about it
 │   ├── needs.rs       Needs: hunger, energy and mood, and nothing else
 │   ├── staff.rs       Staff: somebody on the payroll, and the job they do
+│   ├── track.rs       Track: the shape a ride is built out of
+│   ├── ride.rs        Ride: trains, physics, test runs and what it is worth
 │   └── walk.rs        Walk: a route and a position, shared by both of them
 ├── view/          drawing, entirely through isogrid::render::Renderer
 │   ├── mod.rs         the frame: sky, land, hover highlight, HUD
 │   ├── land.rs        the ground at the height it stands, faces and all
 │   ├── facility.rs    what is built, and the label for the hovered tile
 │   ├── guest.rs       the crowd
+│   ├── ride.rs        rails, supports, trains and platforms
 │   └── staff.rs       the payroll
 ├── app.rs         OpenPark: state, controls, and what a tick means
 ├── tool.rs        Tool: what the mouse does when you click
 ├── cli.rs         Options: the flags, parsed by hand
 ├── screenshot.rs  the one deliberate reach past the Renderer trait
+├── demo.rs        the coaster the screenshots are of
+├── save.rs        the save file: a version, a park, and an atomic write
 ├── lib.rs         the library, so all of the above can be tested
 └── main.rs        the window, and nothing else
 ```

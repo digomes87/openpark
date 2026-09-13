@@ -28,6 +28,10 @@ pub struct Options {
     pub tool: Tool,
     /// Whether to lay the demo coaster before the window opens.
     pub coaster: bool,
+    /// A save to load instead of generating a park.
+    pub load: Option<String>,
+    /// Where the save tools write, and where to write once at startup.
+    pub save: Option<String>,
 }
 
 impl Default for Options {
@@ -41,6 +45,8 @@ impl Default for Options {
             hover: None,
             tool: Tool::default(),
             coaster: false,
+            load: None,
+            save: None,
         }
     }
 }
@@ -56,6 +62,9 @@ openpark — a park simulator
     --focus X,Y         tile to centre the view on
     --hover X,Y         tile to pretend the pointer is over
     --coaster           lay the demo coaster before the window opens
+    --load PATH         start from a saved park instead of a new one
+    --save PATH         save there once the park is ready, and bind the save
+                        tools to it
     --tool NAME         inspect, stall, bench, demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
                         dig, path, grass, dirt or water
@@ -104,6 +113,8 @@ impl Options {
                 Flag::Hover => options.hover = Some(tile(&value()?, "--hover")?),
                 Flag::Tool => options.tool = tool(&value()?)?,
                 Flag::Coaster => options.coaster = true,
+                Flag::Load => options.load = Some(value()?),
+                Flag::Save => options.save = Some(value()?),
                 Flag::Help => anyhow::bail!("{USAGE}"),
                 Flag::Unknown => anyhow::bail!("unknown option {argument}\n\n{USAGE}"),
             }
@@ -128,6 +139,8 @@ enum Flag {
     Hover,
     Tool,
     Coaster,
+    Load,
+    Save,
     Help,
     Unknown,
 }
@@ -142,6 +155,8 @@ fn value_of(argument: &str) -> Flag {
         "--hover" => Flag::Hover,
         "--tool" => Flag::Tool,
         "--coaster" => Flag::Coaster,
+        "--load" => Flag::Load,
+        "--save" => Flag::Save,
         "-h" | "--help" => Flag::Help,
         _ => Flag::Unknown,
     }

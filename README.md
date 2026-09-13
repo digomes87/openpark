@@ -41,6 +41,22 @@ The crowd wears its own shortcuts into the grass, and a handyman walks them back
 to lawn — slower than a busy park ruins them, which is what makes hiring a second
 one a decision.
 
+![A wooden coaster beside the crossroads: a station with a queue beside it, a
+chain lift, and raised track on timber supports](docs/images/coaster.png)
+
+Rides are built a piece at a time — station, straight, curves, slopes, a chain
+lift, brakes, and driven track for the gentle ones — and a ride has to pass a
+test run before anybody is let on. A layout has to earn its speed from its own
+height: send a train at a hill it cannot climb and the test train stalls, and a
+ride that stalls does not open. What the test run finds becomes the ride's
+excitement and intensity, which is what decides both how much guests enjoy it and
+how much they will pay for it.
+
+Rides wear out as they run, and a worn ride breaks down. A mechanic puts it back
+together; a park without one never runs that ride again.
+
+All of it saves and loads, dice included.
+
 The land has a shape. A new park is rolling rather than flat, and you can raise
 it, dig it out and pave it yourself. A step up costs a guest four times what flat
 ground does, so a crowd goes round a hill it could have climbed; two steps is a
@@ -78,12 +94,17 @@ sudo apt-get install libx11-dev libxi-dev libgl1-mesa-dev libasound2-dev
 | Arrow keys | Scroll |
 | Mouse wheel | Zoom toward the cursor |
 | `+` / `-` | Zoom in and out |
-| `Space` | Cycle the tool: look, build, demolish, price, hire, fire, raise, dig, lay |
+| `1` – `8` | Pick a toolbar: look, build, prices, staff, land, track, rides, saves |
+| `Space` | Walk along the toolbar in hand |
+| Arrow keys (with the new-ride tool) | Point the ride's first piece of track |
 | Left click | Use the tool on the tile under the pointer |
 | `Esc` | Put the tool down, or quit when empty-handed |
 
-Number keys for the toolbar wait on the engine growing them; the space bar is
-the placeholder.
+The number row picks a toolbar and the space bar walks along the one in hand.
+Fifteen tools on a single cycle was already too many and track pieces would have
+made it twenty-five, so the engine
+([isogrid#14](https://github.com/digomes87/isogrid/pull/14)) grew the number row
+for it.
 
 ### Taking a screenshot
 
@@ -97,7 +118,21 @@ cargo run --release -- --screenshot docs/images/park.png \
 
 `--ticks` fast-forwards the simulation before the window opens, so a picture of
 a busy afternoon does not take an afternoon to take. `--seed`, `--focus`,
-`--zoom`, `--tool` and `--hover` frame the shot; `--help` lists them all.
+`--zoom`, `--tool` and `--hover` frame the shot, and `--coaster` lays the demo
+ride the picture above shows; `--help` lists them all.
+
+### Saving
+
+```sh
+cargo run --release -- --save my-park.save.json     # write one, then play
+cargo run --release -- --load my-park.save.json     # carry on where it left off
+```
+
+Toolbar `8` saves and loads with a click, to `openpark.save.json` unless `--save`
+or `--load` named somewhere else. A save is JSON with a version on the front:
+readable, diffable, and refused outright rather than half-read if it was written
+by a newer build. The dice are part of it, so a loaded park carries on exactly as
+the saved one would have — the same guests do the same things.
 
 ## How it is put together
 
@@ -125,8 +160,8 @@ code — be tested without opening a window.
 - [x] Building and demolishing them yourself, with the mouse
 - [x] Shops, prices, staff and a park that can go bankrupt
 - [x] Terrain editing
-- [ ] The track builder and ride physics
-- [ ] Save and load
+- [x] The track builder and ride physics
+- [x] Save and load
 
 ## Development
 
