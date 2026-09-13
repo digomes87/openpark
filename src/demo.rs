@@ -94,7 +94,10 @@ fn buy_something_gentle(park: &mut Park) {
     #[allow(clippy::cast_possible_wrap)]
     let gate = park.entrance().x;
 
-    for step in 0..park.width() as i32 {
+    #[allow(clippy::cast_possible_wrap)]
+    let across = park.width() as i32;
+
+    for step in 0..across {
         for away in [-step, step] {
             let corner = TilePos::new(gate + away - 3, middle + 2);
             if !park.can_buy_a_ride(corner, FlatRide::Carousel) {

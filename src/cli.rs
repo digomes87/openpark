@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::{Facility, Scenery, StaffKind, Terrain};
+use crate::park::{Facility, FlatRide, Scenery, StaffKind, Terrain};
 use crate::tool::Tool;
 
 /// How the game was asked to start.
@@ -68,7 +68,8 @@ openpark — a park simulator
     --tool NAME         inspect, stall, bench, demolish, price-up,
                         price-down, handyman, entertainer, fire, raise,
                         dig, path, queue, grass, dirt, water, tree,
-                        flowerbed, fountain, lamp or uproot
+                        flowerbed, fountain, lamp, uproot, carousel, wheel,
+                        haunted, teacups, borrow, repay or advertise
     -h, --help          print this
 ";
 
@@ -196,6 +197,13 @@ fn tool(value: &str) -> Result<Tool> {
         "fountain" => Ok(Tool::Plant(Scenery::Fountain)),
         "lamp" => Ok(Tool::Plant(Scenery::Lamp)),
         "uproot" => Ok(Tool::Uproot),
+        "carousel" => Ok(Tool::Buy(FlatRide::Carousel)),
+        "wheel" => Ok(Tool::Buy(FlatRide::FerrisWheel)),
+        "haunted" => Ok(Tool::Buy(FlatRide::HauntedHouse)),
+        "teacups" => Ok(Tool::Buy(FlatRide::TeaCups)),
+        "borrow" => Ok(Tool::Borrow),
+        "repay" => Ok(Tool::Repay),
+        "advertise" => Ok(Tool::Advertise),
         "grass" => Ok(Tool::Lay(Terrain::Grass)),
         "dirt" => Ok(Tool::Lay(Terrain::Dirt)),
         "water" => Ok(Tool::Lay(Terrain::Water)),
