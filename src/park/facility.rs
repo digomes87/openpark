@@ -19,19 +19,41 @@ use crate::park::Money;
 pub enum Facility {
     /// Sells food. The only cure for hunger there is.
     FoodStall,
+    /// Sells drinks. Quicker to use than a meal, and the reason a park needs
+    /// toilets.
+    DrinkStall,
     /// Somewhere to sit. Free, and the only cure for sore feet.
     Bench,
+    /// A toilet. The one thing a guest will not wait for and will not forgive.
+    Toilet,
+    /// A litter bin. Nobody queues for one; what it does is stop the rubbish
+    /// ending up on the path.
+    Bin,
 }
 
 impl Facility {
     /// Everything that can be built, for tests and for menus later on.
-    pub const ALL: [Self; 2] = [Self::FoodStall, Self::Bench];
+    pub const ALL: [Self; 5] = [
+        Self::FoodStall,
+        Self::DrinkStall,
+        Self::Bench,
+        Self::Toilet,
+        Self::Bin,
+    ];
+
+    /// The things a guest will go out of its way for.
+    ///
+    /// Everything except the bin, which is used in passing or not at all.
+    pub const WANTED: [Self; 4] = [Self::FoodStall, Self::DrinkStall, Self::Bench, Self::Toilet];
 
     /// What it costs the park to put one up.
     pub const fn build_cost(self) -> Money {
         match self {
             Self::FoodStall => 600,
+            Self::DrinkStall => 450,
             Self::Bench => 50,
+            Self::Toilet => 700,
+            Self::Bin => 40,
         }
     }
 
@@ -49,7 +71,10 @@ impl Facility {
     pub const fn price(self) -> Money {
         match self {
             Self::FoodStall => 12,
-            Self::Bench => 0,
+            Self::DrinkStall => 8,
+            // A park that charges for a bench, or for the toilets, may: both
+            // open free, and both can be priced like anything else.
+            Self::Bench | Self::Toilet | Self::Bin => 0,
         }
     }
 
@@ -66,7 +91,11 @@ impl Facility {
     pub const fn upkeep(self) -> Money {
         match self {
             Self::FoodStall => 25,
+            Self::DrinkStall => 18,
             Self::Bench => 2,
+            // Somebody has to clean them, whatever the park charges.
+            Self::Toilet => 30,
+            Self::Bin => 1,
         }
     }
 
@@ -77,7 +106,11 @@ impl Facility {
     pub const fn ticks_to_use(self) -> u64 {
         match self {
             Self::FoodStall => 320,
+            Self::DrinkStall => 160,
             Self::Bench => 800,
+            Self::Toilet => 240,
+            // Nobody stands at a bin.
+            Self::Bin => 1,
         }
     }
 
@@ -85,7 +118,10 @@ impl Facility {
     pub const fn colour(self) -> Color {
         match self {
             Self::FoodStall => Color::hex(0xC4_5A_3B),
+            Self::DrinkStall => Color::hex(0x3B_8C_C4),
             Self::Bench => Color::hex(0x8A_6A_46),
+            Self::Toilet => Color::hex(0xD8_D8_D0),
+            Self::Bin => Color::hex(0x5A_5A_52),
         }
     }
 
@@ -93,7 +129,10 @@ impl Facility {
     pub const fn trim_colour(self) -> Color {
         match self {
             Self::FoodStall => Color::hex(0xF2_E4_C9),
+            Self::DrinkStall => Color::hex(0xC9_E8_F2),
             Self::Bench => Color::hex(0xB8_92_63),
+            Self::Toilet => Color::hex(0x8C_A8_B2),
+            Self::Bin => Color::hex(0x3A_3A_34),
         }
     }
 
@@ -101,7 +140,10 @@ impl Facility {
     pub const fn height(self) -> f32 {
         match self {
             Self::FoodStall => 0.55,
+            Self::DrinkStall => 0.5,
             Self::Bench => 0.18,
+            Self::Toilet => 0.65,
+            Self::Bin => 0.2,
         }
     }
 
@@ -109,7 +151,10 @@ impl Facility {
     pub const fn name(self) -> &'static str {
         match self {
             Self::FoodStall => "Food stall",
+            Self::DrinkStall => "Drink stall",
             Self::Bench => "Bench",
+            Self::Toilet => "Toilet",
+            Self::Bin => "Litter bin",
         }
     }
 }
@@ -129,9 +174,24 @@ mod tests {
     }
 
     #[test]
-    fn a_stall_charges_and_a_bench_does_not() {
+    fn the_stalls_charge_and_the_rest_do_not() {
         assert!(Facility::FoodStall.price() > 0);
-        assert_eq!(Facility::Bench.price(), 0);
+        assert!(Facility::DrinkStall.price() > 0);
+
+        for free in [Facility::Bench, Facility::Toilet, Facility::Bin] {
+            assert_eq!(free.price(), 0, "{free:?} opens free");
+        }
+    }
+
+    #[test]
+    fn a_bin_is_not_something_anybody_queues_for() {
+        assert!(
+            !Facility::WANTED.contains(&Facility::Bin),
+            "guests queue for the bins"
+        );
+        for wanted in Facility::WANTED {
+            assert!(Facility::ALL.contains(&wanted), "{wanted:?}");
+        }
     }
 
     #[test]
@@ -146,11 +206,12 @@ mod tests {
 
     #[test]
     fn a_stall_at_the_fair_price_covers_its_own_upkeep() {
-        let stall = Facility::FoodStall;
-        assert!(
-            stall.price() * 3 > stall.upkeep(),
-            "three customers a wage bill should keep a stall in business"
-        );
+        for stall in [Facility::FoodStall, Facility::DrinkStall] {
+            assert!(
+                stall.price() * 3 > stall.upkeep(),
+                "three customers a wage bill should keep a {stall:?} in business"
+            );
+        }
     }
 
     #[test]
@@ -165,11 +226,12 @@ mod tests {
 
     #[test]
     fn a_stall_pays_for_itself_eventually() {
-        let stall = Facility::FoodStall;
-        assert!(
-            stall.build_cost() / stall.price() < 100,
-            "a stall would need a hundred customers to break even"
-        );
+        for stall in [Facility::FoodStall, Facility::DrinkStall] {
+            assert!(
+                stall.build_cost() / stall.price() < 100,
+                "a {stall:?} would need a hundred customers to break even"
+            );
+        }
     }
 
     #[test]

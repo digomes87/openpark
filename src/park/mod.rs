@@ -305,9 +305,12 @@ impl Park {
         // thing a guest walks past is somewhere to eat.
         let plan = [
             (TilePos::new(mid_x - 1, mid_y / 2), Facility::FoodStall),
+            (TilePos::new(mid_x + 1, mid_y / 2 + 2), Facility::DrinkStall),
             (TilePos::new(mid_x + 1, mid_y / 2 + 3), Facility::Bench),
+            (TilePos::new(mid_x - 1, mid_y / 2 + 5), Facility::Toilet),
             (TilePos::new(mid_x + 1, mid_y - 2), Facility::FoodStall),
             (TilePos::new(mid_x - 1, mid_y + 2), Facility::Bench),
+            (TilePos::new(mid_x + 1, mid_y + 4), Facility::Bin),
             (TilePos::new(mid_x - 1, mid_y + 6), Facility::Bench),
         ];
 

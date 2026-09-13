@@ -661,26 +661,34 @@ impl Park {
             ));
         }
 
-        match Self::what_it_wants(guest) {
-            Some(Wanted::Ride) => {
-                if let Some((ride, station, route)) = nearest_ride(map, finder, from, rides, guest)
-                {
-                    return Some((
-                        Plan::Queueing {
-                            ride,
-                            station,
-                            since: now,
-                        },
-                        route,
-                    ));
+        // Every want, most pressing first, and the first one the park can
+        // actually answer wins. A guest that cannot find a toilet does not give
+        // up and stare at the grass — it goes and gets a drink instead, and
+        // resents the park in its own time.
+        for wanted in Self::what_it_wants(guest) {
+            match wanted {
+                Wanted::Ride => {
+                    if let Some((ride, station, route)) =
+                        nearest_ride(map, finder, from, rides, guest)
+                    {
+                        return Some((
+                            Plan::Queueing {
+                                ride,
+                                station,
+                                since: now,
+                            },
+                            route,
+                        ));
+                    }
+                }
+                Wanted::Something(kind) => {
+                    if let Some((facility, route)) =
+                        nearest_facility(map, finder, from, kind, guest)
+                    {
+                        return Some((Plan::Visiting { facility }, route));
+                    }
                 }
             }
-            Some(Wanted::Something(kind)) => {
-                if let Some((facility, route)) = nearest_facility(map, finder, from, kind, guest) {
-                    return Some((Plan::Visiting { facility }, route));
-                }
-            }
-            None => {}
         }
 
         Some((Plan::Wandering, wander(map, rng, finder, from)?))
@@ -691,19 +699,32 @@ impl Park {
     /// Hunger first: it is the need that ends a visit. What the guest can
     /// afford, and what it thinks is a fair price, is settled per shop by
     /// [`nearest_facility`] — two stalls in one park need not agree on either.
-    fn what_it_wants(guest: &Guest) -> Option<Wanted> {
-        // Something to do comes first — it is what the guest came for — but a
-        // guest that is starving or footsore sorts that out before queueing.
-        if guest.needs().wants_food() {
-            return Some(Wanted::Something(Facility::FoodStall));
+    fn what_it_wants(guest: &Guest) -> Vec<Wanted> {
+        // In the order a person would sort them out. A toilet first: it is the
+        // one thing that spoils everything else, and a guest looking for one is
+        // not interested in a coaster. Then thirst, which arrives before
+        // hunger, then hunger, then somewhere to sit — and only once none of
+        // that is pressing, the thing the guest actually came for.
+        let needs = guest.needs();
+        let mut wants = Vec::new();
+
+        if needs.wants_a_toilet() {
+            wants.push(Wanted::Something(Facility::Toilet));
         }
-        if guest.needs().wants_a_sit_down() {
-            return Some(Wanted::Something(Facility::Bench));
+        if needs.wants_a_drink() {
+            wants.push(Wanted::Something(Facility::DrinkStall));
         }
-        if guest.needs().wants_a_ride() {
-            return Some(Wanted::Ride);
+        if needs.wants_food() {
+            wants.push(Wanted::Something(Facility::FoodStall));
         }
-        None
+        if needs.wants_a_sit_down() {
+            wants.push(Wanted::Something(Facility::Bench));
+        }
+        if needs.wants_a_ride() {
+            wants.push(Wanted::Ride);
+        }
+
+        wants
     }
 
     /// Sees off everyone who has made it back to the gate.
