@@ -70,6 +70,14 @@ corner nobody visits does nothing. The rating is what decides how busy the gate
 gets: word of mouth is the only advertising a park has, and a park nobody has
 heard of fills four times slower than one everybody is talking about.
 
+And the park will tell you what is wrong with it. Every guest keeps the last
+thing it thought — the queue it walked out of, the ride that shook it about, the
+price it would not pay, the thing it wanted and could not find — and the HUD
+carries the loudest complaint in the park. Hover a guest to hear it from them.
+
+![The HUD reading "Loudest: 10 x I'm thirsty" over a busy
+crossroads](docs/images/thoughts.png)
+
 Guests want more than feeding. Thirst arrives before hunger, and a drink fills a
 bladder faster than a meal does — so a park that sells drinks without building
 toilets has made a decision whether it meant to or not. A bursting guest sours
