@@ -518,7 +518,13 @@ impl Guest {
     /// Walking is harder work than standing about, so a guest that has run out
     /// of route wears down more slowly until it is given a new one.
     pub fn live(&mut self) {
-        self.needs.wear_down(!self.is_idle());
+        self.live_in(1.0);
+    }
+
+    /// The same tick, under weather that makes people `thirsty` times as
+    /// thirsty as a grey day.
+    pub fn live_in(&mut self, thirsty: f32) {
+        self.needs.wear_down_in(!self.is_idle(), thirsty);
         self.thought_lasts = self.thought_lasts.saturating_sub(1);
     }
 

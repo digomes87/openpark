@@ -17,9 +17,6 @@ use isogrid::render::{Color, Renderer, TileShape};
 use crate::park::Park;
 use crate::tool::Tool;
 
-/// The colour behind everything, where there is no park.
-const SKY: Color = Color::hex(0x1B_26_33);
-
 /// The tile the pointer is over, highlighted.
 const HIGHLIGHT: Color = Color::rgba(255, 255, 255, 60);
 
@@ -57,7 +54,7 @@ pub struct Overlay<'a> {
 /// engine, the guests stand on top of it, the highlight goes over them, and the
 /// HUD goes over everything.
 pub fn draw(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &Overlay<'_>) {
-    canvas.clear(SKY);
+    canvas.clear(park.weather().sky());
     land::draw_land(canvas, park, camera);
     facility::draw_facilities(canvas, park, camera);
     ride::draw_rides(canvas, park, camera);
@@ -172,6 +169,7 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         ),
         format!("Value: {}", park.value()),
         format!("Litter: {}", park.rubbish()),
+        format!("Weather: {}", park.weather().name()),
         park.what_they_say().first().map_or_else(
             || "Nobody is complaining".to_owned(),
             |loudest| format!("Loudest: {loudest}"),
@@ -258,10 +256,11 @@ mod tests {
         let (park, camera) = fixture();
         let mut canvas = Recorder::new();
         draw(&mut canvas, &park, &camera, &Overlay::default());
-        assert!(matches!(
+        assert_eq!(
             canvas.commands().first(),
-            Some(Command::Clear(SKY))
-        ));
+            Some(&Command::Clear(park.weather().sky())),
+            "the frame should start by clearing to whatever the sky is doing"
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::park::crowd::{
 use crate::park::queue;
 use crate::park::{
     Facility, Guest, Money, Park, Plan, Queue, Rating, Ride, RideState, Shop, StaffKind, Terrain,
-    Thought,
+    Thought, Weather,
 };
 
 impl Park {
@@ -38,6 +38,7 @@ impl Park {
     /// ```
     pub fn tick_once(&mut self) {
         self.tick = self.tick.after(1);
+        self.watch_the_sky();
 
         // A closed park has nobody at the gate to sell a ticket.
         if !self.is_bankrupt() {
@@ -495,8 +496,19 @@ impl Park {
     fn how_often_people_turn_up(&self) -> u64 {
         let spread = Self::SLOWEST_ARRIVALS - Self::FASTEST_ARRIVALS;
         let word_of_mouth = u64::from(self.regard()) * spread / u64::from(Rating::BEST);
+        let earned = Self::SLOWEST_ARRIVALS.saturating_sub(word_of_mouth);
 
-        Self::SLOWEST_ARRIVALS.saturating_sub(word_of_mouth)
+        // And then the weather has its say. A wet afternoon stretches the gap
+        // between arrivals however well the park is thought of, which is what
+        // makes a run of rain something to weather rather than something to fix.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_precision_loss,
+            clippy::cast_sign_loss
+        )]
+        let in_this_weather = (earned as f32 / self.weather.turnout().max(0.05)) as u64;
+
+        in_this_weather.max(Self::FASTEST_ARRIVALS)
     }
 
     /// Lets one guest in, if one is due and there is room.
@@ -546,6 +558,7 @@ impl Park {
                 guests,
                 rides,
                 rng,
+                weather,
                 ..
             } = self;
 
@@ -563,8 +576,9 @@ impl Park {
             let mut trampled: Vec<TilePos> = Vec::new();
             let mut dropped: Vec<TilePos> = Vec::new();
 
+            let weather = *weather;
             for guest in guests.iter_mut() {
-                guest.live();
+                weather_the_day(guest, weather);
 
                 // Aboard something: not on the map until the ride brings it
                 // back, so it neither walks nor wears the grass out.
@@ -619,16 +633,8 @@ impl Park {
                 }
 
                 // Arrived next to what it came for: stop and use it.
-                if let Plan::Visiting { facility } = guest.plan() {
-                    if guest.tile().neighbours().contains(&facility) {
-                        if let Some(shop) = facilities.get(facility).copied().flatten() {
-                            guest.decide(Plan::Using {
-                                facility,
-                                until: now.after(shop.kind().ticks_to_use()),
-                            });
-                            continue;
-                        }
-                    }
+                if arrived_at_it(guest, facilities, now) {
+                    continue;
                 }
 
                 let route =
@@ -639,7 +645,8 @@ impl Park {
                             // That is the line an owner needs to read.
                             if plan == Plan::Wandering && !guest.is_still_thinking() {
                                 let standing_in = litter.get(guest.tile()).copied().unwrap_or(0);
-                                if let Some(grumble) = Self::grumble_of(guest, standing_in) {
+                                if let Some(grumble) = Self::grumble_of(guest, standing_in, weather)
+                                {
                                     guest.think(grumble);
                                 }
                             }
@@ -762,7 +769,7 @@ impl Park {
     /// the most pressing unmet want in the order it would have gone looking.
     /// `None` when it wanted nothing in the first place — a guest wandering
     /// because it is content is not complaining about anything.
-    fn grumble_of(guest: &Guest, standing_in: u8) -> Option<Thought> {
+    fn grumble_of(guest: &Guest, standing_in: u8, weather: Weather) -> Option<Thought> {
         let needs = guest.needs();
 
         // Rubbish underfoot before any of the wants: a guest with nothing else
@@ -784,6 +791,13 @@ impl Park {
         }
         if needs.wants_a_sit_down() {
             return Some(Thought::Footsore);
+        }
+
+        // Getting soaked outranks being bored and nothing else: a guest that
+        // needs the toilet in the rain has a more pressing problem than the
+        // rain.
+        if weather.is_wet() {
+            return Some(Thought::Rain);
         }
         if needs.wants_a_ride() {
             return Some(Thought::Bored);
@@ -903,6 +917,40 @@ fn where_the_rubbish_goes(
     (!binned).then_some(here)
 }
 
+/// Whether a guest has reached the thing it walked over to, and has settled
+/// down to use it.
+///
+/// A facility is used from the tile beside it, so this is the moment a guest
+/// stops walking and starts queueing at a counter — and the one place the tick
+/// count of a facility is read.
+fn arrived_at_it(guest: &mut Guest, facilities: &Grid<Option<Shop>>, now: Tick) -> bool {
+    let Plan::Visiting { facility } = guest.plan() else {
+        return false;
+    };
+    if !guest.tile().neighbours().contains(&facility) {
+        return false;
+    }
+    let Some(shop) = facilities.get(facility).copied().flatten() else {
+        return false;
+    };
+
+    guest.decide(Plan::Using {
+        facility,
+        until: now.after(shop.kind().ticks_to_use()),
+    });
+    true
+}
+
+/// One tick of being out in whatever the sky is doing.
+///
+/// The thirst of it and the misery of it: a sunny afternoon is thirsty work and
+/// a wet one is not, and standing in the rain takes the mood out of anybody who
+/// has nowhere to shelter — which, in a park with no shelter, is everybody.
+fn weather_the_day(guest: &mut Guest, weather: Weather) {
+    guest.live_in(weather.thirst());
+    guest.put_off(weather.misery());
+}
+
 /// Takes what the tile underfoot is like out on the guest standing on it.
 ///
 /// Worn-out ground is a shabby thing to walk across, and somebody else's
@@ -923,7 +971,9 @@ mod tests {
     use isogrid::iso::TilePos;
     use isogrid::time::Tick;
 
-    use crate::park::fixtures::{bare_park_opened_for, park_with_a_coaster, run, A_WHOLE_VISIT};
+    use crate::park::fixtures::{
+        bare_park_opened_for, park_with_a_coaster, run, run_in_the_sun, A_WHOLE_VISIT,
+    };
     use crate::park::StaffKind;
     use crate::park::{Queue, Ride, Train};
 
@@ -1024,7 +1074,7 @@ mod tests {
         let (park, id, line) = park_with_a_queue();
         assert!(line.len() >= 3, "the queue path was not found");
 
-        let park = run(park, 6_000);
+        let park = run_in_the_sun(park, 6_000);
         let waiting = park.ride(id).expect("the ride is there").queue();
         assert!(!waiting.is_empty(), "nobody ever queued");
 
@@ -1062,10 +1112,8 @@ mod tests {
 
     #[test]
     fn a_ride_that_breaks_down_turns_its_line_loose() {
-        let (mut park, id, _) = park_with_a_queue();
-        for _ in 0..6_000 {
-            park.tick_once();
-        }
+        let (park, id, _) = park_with_a_queue();
+        let mut park = run_in_the_sun(park, 6_000);
         assert!(
             !park.ride(id).unwrap().queue().is_empty(),
             "nobody was queueing to be turned loose"
@@ -1095,14 +1143,12 @@ mod tests {
 
     #[test]
     fn nobody_stands_in_a_line_for_ever() {
-        let (mut park, id, _) = park_with_a_queue();
+        let (park, id, _) = park_with_a_queue();
 
         // Shut the ride with a queue already forming, but leave it standing:
         // the line has nothing to wait for, and should thin out on patience
         // alone rather than on the ride telling it to go.
-        for _ in 0..6_000 {
-            park.tick_once();
-        }
+        let park = run_in_the_sun(park, 6_000);
         let queued = park.ride(id).unwrap().queue().len();
         assert!(queued > 0, "nobody joined the line");
 
@@ -1122,7 +1168,7 @@ mod tests {
     #[test]
     fn a_queue_survives_a_save_with_everybody_in_their_place() {
         let (park, id, _) = park_with_a_queue();
-        let park = run(park, 6_000);
+        let park = run_in_the_sun(park, 6_000);
         let waiting = park.ride(id).unwrap().queue().waiting().to_vec();
         assert!(!waiting.is_empty(), "nobody queued");
 
@@ -1139,6 +1185,7 @@ mod tests {
 
         let mut fullest = 0;
         for _ in 0..12_000 {
+            park.set_weather(crate::park::Weather::Sunny);
             park.tick_once();
             fullest = fullest.max(
                 park.ride(id)
@@ -1158,10 +1205,8 @@ mod tests {
 
     #[test]
     fn somebody_who_gives_up_on_the_day_gives_up_their_place_in_the_line() {
-        let (mut park, id, _) = park_with_a_queue();
-        for _ in 0..6_000 {
-            park.tick_once();
-        }
+        let (park, id, _) = park_with_a_queue();
+        let mut park = run_in_the_sun(park, 6_000);
 
         let waiting = park.ride(id).unwrap().queue().waiting().to_vec();
         let leaving = *waiting.first().expect("nobody was queueing");
@@ -1236,17 +1281,22 @@ mod tests {
 
     #[test]
     fn a_handyman_sweeps_the_rubbish_up() {
-        let mut park = run(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
-        let dropped = park.rubbish();
-        assert!(dropped > 0, "there was nothing to sweep");
+        // Measured against the same park with nobody on the payroll, because
+        // the crowd keeps dropping more: what a handyman buys is a park that is
+        // less filthy than it would have been, not a spotless one.
+        let untended = run_in_the_sun(Park::new("Litter", 32, 32, 5).unwrap(), A_WHOLE_VISIT * 2);
 
-        park.adjust_cash(10_000);
-        park.hire(StaffKind::Handyman).unwrap();
-        let park = run(park, A_WHOLE_VISIT);
+        let mut swept = Park::new("Litter", 32, 32, 5).unwrap();
+        swept.adjust_cash(10_000);
+        swept.hire(StaffKind::Handyman).unwrap();
+        let swept = run_in_the_sun(swept, A_WHOLE_VISIT * 2);
 
+        assert!(untended.rubbish() > 0, "there was nothing to sweep");
         assert!(
-            park.rubbish() < dropped,
-            "the handyman left all {dropped} bits of it where they were"
+            swept.rubbish() < untended.rubbish(),
+            "{} bits of rubbish with a handyman against {} without",
+            swept.rubbish(),
+            untended.rubbish()
         );
     }
 
@@ -1280,15 +1330,18 @@ mod tests {
 
     #[test]
     fn a_park_with_nothing_to_ride_is_told_so_by_its_guests() {
-        let park = run(bare_park_opened_for(1), A_WHOLE_VISIT);
-
+        // Stalls, benches and a toilet, and nothing whatsoever to go on: the
+        // complaint that is left when the ordinary needs are answered is the
+        // one about there being nothing to do.
+        let park = run_in_the_sun(Park::new("Dull", 32, 32, 5).unwrap(), A_WHOLE_VISIT);
         let said = park.what_they_say();
+
         assert!(!said.is_empty(), "nobody said anything about anything");
         assert!(
             park.complaints()
                 .iter()
                 .any(|(thought, _)| *thought == Thought::Bored),
-            "a park with nothing in it and nobody bored: {said:?}"
+            "a park with nothing to ride and nobody bored: {said:?}"
         );
     }
 
@@ -1301,7 +1354,7 @@ mod tests {
             }
         }
 
-        let park = run(park, A_WHOLE_VISIT);
+        let park = run_in_the_sun(park, A_WHOLE_VISIT);
         assert!(
             park.complaints()
                 .iter()
@@ -1313,13 +1366,11 @@ mod tests {
 
     #[test]
     fn somebody_who_gives_up_on_a_queue_says_which_one() {
-        let (mut park, id, _) = park_with_a_queue();
+        let (park, id, _) = park_with_a_queue();
 
         // Run past the patience first, so that a wait backdated to the opening
         // tick really has run out.
-        for _ in 0..u64::from(Queue::PATIENCE) + 500 {
-            park.tick_once();
-        }
+        let mut park = run_in_the_sun(park, u64::from(Queue::PATIENCE) + 500);
 
         let waiting = *park
             .ride(id)
@@ -1388,7 +1439,7 @@ mod tests {
 
     #[test]
     fn the_loudest_complaint_is_the_one_most_people_have() {
-        let park = run(bare_park_opened_for(1), A_WHOLE_VISIT);
+        let park = run_in_the_sun(bare_park_opened_for(1), A_WHOLE_VISIT);
         let complaints = park.complaints();
 
         for pair in complaints.windows(2) {
