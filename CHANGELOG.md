@@ -112,6 +112,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Park::what_they_say` puts it in words. The HUD carries the loudest complaint
   and hovering a guest shows theirs.
 
+- Weather. `Weather` turns on its own from the park's own dice and walks between
+  sunny, cloudy, rain and storm. Sun makes the crowd thirstier, a storm turns
+  away three quarters of the arrivals, rain takes the mood out of anybody
+  standing in it, and the whole park is drawn in whatever daylight there is.
+  `--weather` opens on a given day.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

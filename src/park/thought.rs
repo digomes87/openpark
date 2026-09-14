@@ -38,6 +38,8 @@ pub enum Thought {
     TooDear,
     /// It is standing in somebody else's rubbish.
     Litter,
+    /// It is getting rained on.
+    Rain,
     /// It has had enough and is leaving.
     GoingHome,
 }
@@ -59,6 +61,7 @@ impl Thought {
                 | Self::Shaken(_)
                 | Self::TooDear
                 | Self::Litter
+                | Self::Rain
                 | Self::GoingHome
         )
     }
@@ -98,6 +101,7 @@ impl Thought {
             Self::Shaken(_) => format!("{ride} shook me about"),
             Self::TooDear => "That's too expensive".to_owned(),
             Self::Litter => "This place is a tip".to_owned(),
+            Self::Rain => "I'm getting soaked".to_owned(),
             Self::GoingHome => "I'm going home".to_owned(),
         }
     }
@@ -166,7 +170,7 @@ mod tests {
 
     /// Every thought there is, so a new one cannot be added without the tests
     /// below seeing it.
-    const EVERY: [Thought; 12] = [
+    const EVERY: [Thought; 13] = [
         Thought::LookingAround,
         Thought::Thirsty,
         Thought::Hungry,
@@ -178,6 +182,7 @@ mod tests {
         Thought::Shaken(0),
         Thought::TooDear,
         Thought::Litter,
+        Thought::Rain,
         Thought::GoingHome,
     ];
 
@@ -217,6 +222,7 @@ mod tests {
             Thought::Shaken(0),
             Thought::TooDear,
             Thought::Litter,
+            Thought::Rain,
             Thought::GoingHome,
         ] {
             assert!(grumble.is_a_complaint(), "{grumble:?}");
