@@ -107,6 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Litter. Guests drop rubbish where there is no bin within reach, it counts
   against the park's looks, and the handyman sweeps it before he mows.
 
+- Guest thoughts. `Thought` is the last thing a guest thought, set at the moment
+  it happened; `Park::complaints` counts what the crowd is saying right now and
+  `Park::what_they_say` puts it in words. The HUD carries the loudest complaint
+  and hovering a guest shows theirs.
+
 ### Changed
 
 - `Park::facilities` is now a grid of `Shop` rather than `Facility`, and

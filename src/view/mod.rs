@@ -172,6 +172,10 @@ fn draw_hud(canvas: &mut dyn Renderer, park: &Park, camera: &Camera, overlay: &O
         ),
         format!("Value: {}", park.value()),
         format!("Litter: {}", park.rubbish()),
+        park.what_they_say().first().map_or_else(
+            || "Nobody is complaining".to_owned(),
+            |loudest| format!("Loudest: {loudest}"),
+        ),
         if park.loan() > 0 {
             format!("Loan: {} ({} a bill)", park.loan(), park.interest())
         } else {
