@@ -39,6 +39,7 @@ src/
 │   ├── guest.rs       Guest: somebody visiting, and what they are doing about it
 │   ├── needs.rs       Needs: hunger, thirst, a bladder, energy and mood
 │   ├── thought.rs     Thought: what a guest is thinking, and why
+│   ├── weather.rs     Weather: what the sky is doing to everybody under it
 │   ├── staff.rs       Staff: somebody on the payroll, and the job they do
 │   ├── track.rs       Track: the shape a ride is built out of
 │   ├── ride.rs        Ride: a layout, trains, test runs, and what it is worth
