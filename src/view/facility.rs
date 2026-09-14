@@ -77,6 +77,24 @@ fn draw_facility(canvas: &mut dyn Renderer, base: ScreenPoint, scale: f32, facil
 /// Whoever is standing on the tile comes first, then whatever is built on it
 /// with the price on its board and what it has taken, then the bare ground.
 pub fn describe(park: &Park, tile: TilePos) -> String {
+    // A guest first: whoever is standing on the tile is the most interesting
+    // thing about it, and what they are thinking is the reason to look.
+    if let Some(guest) = park.guests().iter().find(|guest| guest.tile() == tile) {
+        let about = guest
+            .thought()
+            .ride()
+            .and_then(|id| park.ride(id))
+            .map_or_else(|| "that ride".to_owned(), |ride| ride.name().to_owned());
+
+        return format!(
+            "Guest {} — \"{}\", {} in pocket, {:.0}% happy",
+            guest.id(),
+            guest.thought().said_about(&about),
+            guest.money(),
+            guest.needs().happiness() * 100.0
+        );
+    }
+
     if let Some(ride) = park.ride_at(tile) {
         let stats = ride.stats().map_or_else(
             || "not tested".to_owned(),

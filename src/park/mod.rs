@@ -20,6 +20,7 @@ mod scenery;
 mod shop;
 mod staff;
 mod terrain;
+mod thought;
 mod track;
 mod walk;
 
@@ -37,6 +38,7 @@ pub use scenery::Scenery;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
+pub use thought::Thought;
 pub use track::{Heading, Segment, Track, TrackPiece};
 pub use walk::Walk;
 

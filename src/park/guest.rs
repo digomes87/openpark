@@ -10,7 +10,7 @@ use isogrid::render::Color;
 use isogrid::time::Tick;
 use serde::{Deserialize, Serialize};
 
-use crate::park::{Facility, Money, Needs, Ride, Shop, Walk};
+use crate::park::{Facility, Money, Needs, Ride, Shop, Thought, Walk};
 
 /// The shirts guests turn up in.
 ///
@@ -103,6 +103,11 @@ pub struct Guest {
     /// Drawn when the guest arrives, so a park full of people disagrees about
     /// whether a stall is a rip-off rather than emptying all at once.
     tolerance: f32,
+    /// The last thing it thought.
+    thought: Thought,
+    /// How many ticks that thought has left before the guest stops dwelling on
+    /// it.
+    thought_lasts: u32,
     /// How rough a ride this guest will go on, from 0 to 1.
     ///
     /// The reason a park wants a carousel as well as a coaster: the timid end of
@@ -152,6 +157,8 @@ impl Guest {
             needs: Needs::fresh(),
             plan: Plan::Wandering,
             money,
+            thought: Thought::LookingAround,
+            thought_lasts: 0,
             tolerance: f32::midpoint(least, most),
             nerve: f32::midpoint(Self::NERVE.0, Self::NERVE.1),
         }
@@ -175,6 +182,38 @@ impl Guest {
     /// How rough a ride this guest will go on.
     pub const fn nerve(&self) -> f32 {
         self.nerve
+    }
+
+    /// The last thing it thought.
+    pub const fn thought(&self) -> Thought {
+        self.thought
+    }
+
+    /// How long a guest dwells on something before it is open to thinking
+    /// about anything else.
+    ///
+    /// Twenty seconds at [`isogrid::time::TickRate::CLASSIC`]. Without it the
+    /// thing a guest thinks every tick drowns out the thing that happened to
+    /// it: an owner asking why the crowd is unhappy gets told about the ground
+    /// they are standing on rather than the queue they just walked out of.
+    pub const A_THOUGHT_STICKS: u32 = 800;
+
+    /// Gives it something to think, and something to dwell on.
+    ///
+    /// Kept separate from [`Guest::decide`] on purpose: what a guest is doing
+    /// and what it is thinking about are different, and a guest walking to a
+    /// stall can perfectly well be thinking about the queue it just left.
+    pub const fn think(&mut self, thought: Thought) {
+        self.thought = thought;
+        self.thought_lasts = Self::A_THOUGHT_STICKS;
+    }
+
+    /// Whether it is still dwelling on whatever it last thought.
+    ///
+    /// What stops the passing grumbles — the ground, the litter, being a bit
+    /// thirsty — from talking over something that actually happened.
+    pub const fn is_still_thinking(&self) -> bool {
+        self.thought_lasts > 0
     }
 
     /// The same guest, but harder or easier to sell to.
@@ -291,8 +330,16 @@ impl Guest {
 
     /// Rides something as exciting and as rough as `excitement` and
     /// `intensity`.
-    pub fn enjoy_a_ride(&mut self, excitement: f32, intensity: f32) {
+    pub fn enjoy_a_ride(&mut self, ride: u32, excitement: f32, intensity: f32) {
         self.needs.enjoy_a_ride(excitement, intensity);
+
+        // Shaken about counts for more than enjoyed: a guest that liked a ride
+        // says so, and one that was frightened by it says so louder.
+        self.think(if intensity > self.nerve {
+            Thought::Shaken(ride)
+        } else {
+            Thought::LovedIt(ride)
+        });
     }
 
     /// Changes the guest's mind.
@@ -372,6 +419,7 @@ impl Guest {
         // and still thinks it was robbed.
         if price > self.most_it_would_pay(shop.kind()) {
             self.needs.dislike(Self::OVERCHARGED);
+            self.think(Thought::TooDear);
         }
         price
     }
@@ -471,6 +519,7 @@ impl Guest {
     /// of route wears down more slowly until it is given a new one.
     pub fn live(&mut self) {
         self.needs.wear_down(!self.is_idle());
+        self.thought_lasts = self.thought_lasts.saturating_sub(1);
     }
 
     /// Sends the guest off along a new route.

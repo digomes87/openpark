@@ -16,6 +16,7 @@ use crate::park::crowd::{
 use crate::park::queue;
 use crate::park::{
     Facility, Guest, Money, Park, Plan, Queue, Rating, Ride, RideState, Shop, StaffKind, Terrain,
+    Thought,
 };
 
 impl Park {
@@ -272,6 +273,7 @@ impl Park {
             }
 
             self.guests[index].put_off(Self::GAVE_UP_QUEUEING);
+            self.guests[index].think(Thought::GaveUpQueueing(ride));
             self.guests[index].decide(Plan::Wandering);
             tracing::debug!(guest = id, ride, "gave up waiting");
         }
@@ -296,7 +298,7 @@ impl Park {
                     break;
                 }
                 if guest.riding() == Some(id) {
-                    guest.enjoy_a_ride(excitement, intensity);
+                    guest.enjoy_a_ride(id, excitement, intensity);
                     guest.get_off();
                     left -= 1;
                 }
@@ -593,6 +595,7 @@ impl Park {
                 }
 
                 if guest.needs().is_fed_up() {
+                    guest.think(Thought::GoingHome);
                     guest.decide(Plan::GoingHome);
                 }
 
@@ -631,6 +634,16 @@ impl Park {
                 let route =
                     match Self::what_next(guest, &map, rng, &mut finder, entrance, rides, now) {
                         Some((plan, route)) => {
+                            // Wandering means nothing it wanted could be found,
+                            // so what it wanted is what it is thinking about.
+                            // That is the line an owner needs to read.
+                            if plan == Plan::Wandering && !guest.is_still_thinking() {
+                                let standing_in = litter.get(guest.tile()).copied().unwrap_or(0);
+                                if let Some(grumble) = Self::grumble_of(guest, standing_in) {
+                                    guest.think(grumble);
+                                }
+                            }
+
                             guest.decide(plan);
                             Some(route)
                         }
@@ -741,6 +754,42 @@ impl Park {
         }
 
         Some((Plan::Wandering, wander(map, rng, finder, from)?))
+    }
+
+    /// What a guest complains about when the park cannot answer what it wants.
+    ///
+    /// The rubbish it is standing in, if there is enough of it, and otherwise
+    /// the most pressing unmet want in the order it would have gone looking.
+    /// `None` when it wanted nothing in the first place — a guest wandering
+    /// because it is content is not complaining about anything.
+    fn grumble_of(guest: &Guest, standing_in: u8) -> Option<Thought> {
+        let needs = guest.needs();
+
+        // Rubbish underfoot before any of the wants: a guest with nothing else
+        // wrong still notices what it is standing in, and this is the only
+        // moment it is asked — checked every tick it would drown out every
+        // other thought in the park.
+        if standing_in >= Park::MAX_LITTER {
+            return Some(Thought::Litter);
+        }
+
+        if needs.wants_a_toilet() {
+            return Some(Thought::Bursting);
+        }
+        if needs.wants_a_drink() {
+            return Some(Thought::Thirsty);
+        }
+        if needs.wants_food() {
+            return Some(Thought::Hungry);
+        }
+        if needs.wants_a_sit_down() {
+            return Some(Thought::Footsore);
+        }
+        if needs.wants_a_ride() {
+            return Some(Thought::Bored);
+        }
+
+        None
     }
 
     /// What the guest would go out of its way for, if anything.
@@ -872,8 +921,9 @@ mod tests {
     use super::*;
 
     use isogrid::iso::TilePos;
+    use isogrid::time::Tick;
 
-    use crate::park::fixtures::{park_with_a_coaster, run, A_WHOLE_VISIT};
+    use crate::park::fixtures::{bare_park_opened_for, park_with_a_coaster, run, A_WHOLE_VISIT};
     use crate::park::StaffKind;
     use crate::park::{Queue, Ride, Train};
 
@@ -1226,5 +1276,126 @@ mod tests {
         let loaded: Park = serde_json::from_str(&json).unwrap();
 
         assert_eq!(loaded.rubbish(), park.rubbish());
+    }
+
+    #[test]
+    fn a_park_with_nothing_to_ride_is_told_so_by_its_guests() {
+        let park = run(bare_park_opened_for(1), A_WHOLE_VISIT);
+
+        let said = park.what_they_say();
+        assert!(!said.is_empty(), "nobody said anything about anything");
+        assert!(
+            park.complaints()
+                .iter()
+                .any(|(thought, _)| *thought == Thought::Bored),
+            "a park with nothing in it and nobody bored: {said:?}"
+        );
+    }
+
+    #[test]
+    fn a_park_with_no_drinks_is_told_that_instead() {
+        let mut park = Park::new("Dry", 32, 32, 5).unwrap();
+        for tile in park.terrain().positions().collect::<Vec<_>>() {
+            if park.facility_at(tile) == Some(Facility::DrinkStall) {
+                park.demolish(tile);
+            }
+        }
+
+        let park = run(park, A_WHOLE_VISIT);
+        assert!(
+            park.complaints()
+                .iter()
+                .any(|(thought, _)| *thought == Thought::Thirsty),
+            "the drink stalls were torn down and nobody was thirsty: {:?}",
+            park.what_they_say()
+        );
+    }
+
+    #[test]
+    fn somebody_who_gives_up_on_a_queue_says_which_one() {
+        let (mut park, id, _) = park_with_a_queue();
+
+        // Run past the patience first, so that a wait backdated to the opening
+        // tick really has run out.
+        for _ in 0..u64::from(Queue::PATIENCE) + 500 {
+            park.tick_once();
+        }
+
+        let waiting = *park
+            .ride(id)
+            .unwrap()
+            .queue()
+            .waiting()
+            .first()
+            .expect("nobody queued");
+        let station = park.ride(id).unwrap().stations()[0];
+
+        // Backdated rather than waited out: the line in this park is served, so
+        // nobody would ever run out of patience in it. What is being tested is
+        // what a guest thinks when it does.
+        for guest in &mut park.guests {
+            if guest.id() == waiting {
+                guest.decide_anyway(Plan::Queueing {
+                    ride: id,
+                    station,
+                    since: Tick::ZERO,
+                });
+            }
+        }
+        park.tick_once();
+
+        let blamed = park
+            .guests()
+            .iter()
+            .find(|guest| guest.id() == waiting)
+            .map(Guest::thought);
+
+        assert_eq!(
+            blamed,
+            Some(Thought::GaveUpQueueing(id)),
+            "the guest that gave up blamed {blamed:?} instead of the queue"
+        );
+        assert!(
+            !park.ride(id).unwrap().queue().holds(waiting),
+            "it is still standing in the line it gave up on"
+        );
+    }
+
+    #[test]
+    fn a_guest_that_has_been_on_something_says_so() {
+        let (park, id) = park_with_a_coaster();
+        let park = run(park, A_WHOLE_VISIT);
+
+        let happy = park
+            .guests()
+            .iter()
+            .filter(|guest| {
+                matches!(
+                    guest.thought(),
+                    Thought::LovedIt(ride) | Thought::Shaken(ride) if ride == id
+                )
+            })
+            .count();
+
+        assert!(happy > 0, "nobody had an opinion about the coaster");
+        assert!(
+            park.complaints()
+                .iter()
+                .all(|(thought, _)| *thought != Thought::LovedIt(id)),
+            "enjoying yourself was counted as a complaint"
+        );
+    }
+
+    #[test]
+    fn the_loudest_complaint_is_the_one_most_people_have() {
+        let park = run(bare_park_opened_for(1), A_WHOLE_VISIT);
+        let complaints = park.complaints();
+
+        for pair in complaints.windows(2) {
+            assert!(
+                pair[0].1 >= pair[1].1,
+                "the complaints came back out of order: {complaints:?}"
+            );
+        }
     }
 }
