@@ -193,7 +193,7 @@ mod tests {
 
         let mut canvas = Recorder::new();
         draw_facilities(&mut canvas, &park, &camera);
-        assert!(canvas.commands().is_empty());
+        assert_eq!(canvas.commands().len(), 0);
     }
 
     #[test]

@@ -302,7 +302,7 @@ mod tests {
         assert_eq!(gone.id(), id);
         assert_eq!(park.wage_bill(), bill - StaffKind::Handyman.wage());
         assert!(park.fire(id).is_none(), "fired twice");
-        assert!(park.staff().is_empty());
+        assert_eq!(park.staff().len(), 0);
     }
 
     #[test]
@@ -313,7 +313,7 @@ mod tests {
 
         assert!(park.fire_at(TilePos::new(-1, -1)).is_none());
         assert!(park.fire_at(at).is_some());
-        assert!(park.staff().is_empty());
+        assert_eq!(park.staff().len(), 0);
     }
 
     #[test]
