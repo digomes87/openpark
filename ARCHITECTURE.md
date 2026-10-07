@@ -37,7 +37,8 @@ src/
 │   ├── facility.rs    Facility: what a kind of stall or bench is like
 │   ├── shop.rs        Shop: one built facility, its price and its till
 │   ├── guest.rs       Guest: somebody visiting, and what they are doing about it
-│   ├── needs.rs       Needs: hunger, energy and mood, and nothing else
+│   ├── needs.rs       Needs: hunger, thirst, a bladder, energy and mood
+│   ├── thought.rs     Thought: what a guest is thinking, and why
 │   ├── staff.rs       Staff: somebody on the payroll, and the job they do
 │   ├── track.rs       Track: the shape a ride is built out of
 │   ├── ride.rs        Ride: a layout, trains, test runs, and what it is worth
