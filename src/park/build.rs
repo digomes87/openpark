@@ -1113,7 +1113,7 @@ mod tests {
             park.guests().iter().all(|guest| guest.riding().is_none()),
             "somebody is still aboard a ride that no longer exists"
         );
-        assert!(park.rides().is_empty());
+        assert_eq!(park.rides().len(), 0);
     }
 
     #[test]
