@@ -95,7 +95,7 @@ mod tests {
         let (park, camera) = fixture();
         let mut canvas = Recorder::new();
         draw_scenery(&mut canvas, &park, &camera);
-        assert!(canvas.commands().is_empty());
+        assert_eq!(canvas.commands().len(), 0);
     }
 
     #[test]
@@ -146,6 +146,6 @@ mod tests {
 
         let mut canvas = Recorder::new();
         draw_scenery(&mut canvas, &park, &camera);
-        assert!(canvas.commands().is_empty());
+        assert_eq!(canvas.commands().len(), 0);
     }
 }

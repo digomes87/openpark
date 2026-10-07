@@ -264,13 +264,12 @@ dependencies = [
 [[package]]
 name = "isogrid"
 version = "0.1.0"
-source = "git+https://github.com/digomes87/isogrid?branch=feat%2Fnumber-keys#93d0c48afa686047664a8e48d3525cd5eb0e6f60"
+source = "git+https://github.com/digomes87/isogrid?branch=main#180765bd38a65532dd916fb07077ddf7d48a6f29"
 dependencies = [
  "glam 0.33.7",
  "macroquad",
  "serde",
  "thiserror",
- "tracing",
 ]
 
 [[package]]

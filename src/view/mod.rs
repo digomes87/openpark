@@ -271,7 +271,7 @@ mod tests {
         draw(&mut canvas, &park, &camera, &Overlay::default());
 
         let tiles = canvas.filled_tiles();
-        assert!(!tiles.is_empty());
+        assert_ne!(tiles.len(), 0);
         for pair in tiles.windows(2) {
             assert!(pair[0].0.centre.y <= pair[1].0.centre.y);
         }
