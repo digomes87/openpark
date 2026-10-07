@@ -170,7 +170,7 @@ mod tests {
 
         let mut canvas = Recorder::new();
         draw_guests(&mut canvas, &park, &camera);
-        assert!(canvas.commands().is_empty());
+        assert_eq!(canvas.commands().len(), 0);
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
 
         let mut visible = Recorder::new();
         draw_guests(&mut visible, &park, &camera);
-        assert!(!visible.commands().is_empty());
+        assert_ne!(visible.commands().len(), 0);
 
         // Look somewhere the crowd is not.
         camera.look_at(TilePos::new(10_000, 10_000).centre());

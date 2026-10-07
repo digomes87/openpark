@@ -600,7 +600,7 @@ mod tests {
         assert_eq!(park.tick().get(), before.tick().get() + 1);
         assert_eq!(park.terrain(), before.terrain());
         assert_eq!(park.cash(), before.cash(), "the gate opened too early");
-        assert!(park.guests().is_empty());
+        assert_eq!(park.guests().len(), 0);
     }
 
     #[test]
@@ -928,7 +928,7 @@ mod tests {
     #[test]
     fn a_park_full_of_guests_survives_a_save() {
         let park = opened_for(500);
-        assert!(!park.guests().is_empty());
+        assert_ne!(park.guests().len(), 0);
 
         let json = serde_json::to_string(&park).unwrap();
         assert_eq!(serde_json::from_str::<Park>(&json).unwrap(), park);

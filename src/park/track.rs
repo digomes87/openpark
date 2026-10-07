@@ -516,7 +516,7 @@ mod tests {
         assert!(track.is_empty());
         assert_eq!(track.len(), 0);
         assert_eq!(track.cost(), 0);
-        assert!(track.segments().is_empty());
+        assert_eq!(track.segments().len(), 0);
         assert!(!track.is_a_circuit(), "nothing is not a circuit");
         assert_eq!(track.next_place(), (TilePos::ORIGIN, Heading::North, 0));
     }
@@ -658,7 +658,7 @@ mod tests {
         for piece in TrackPiece::ALL {
             assert!(piece.cost() > 0, "{piece:?} is free");
             assert!(piece.upkeep() > 0, "{piece:?} costs nothing to run");
-            assert!(!piece.name().is_empty());
+            assert_ne!(piece.name(), "");
             assert!((-1..=1).contains(&piece.climb()), "{piece:?} climbs oddly");
         }
 

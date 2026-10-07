@@ -1012,7 +1012,7 @@ mod tests {
         assert_eq!(ride.stats(), None);
         assert!(!ride.is_open());
         assert_eq!(ride.price(), Ride::DEFAULT_PRICE);
-        assert!(ride.trains().is_empty());
+        assert_eq!(ride.trains().len(), 0);
         assert_eq!(ride.boarding(), None);
     }
 
@@ -1162,7 +1162,7 @@ mod tests {
         ride.track_mut().expect("a coaster").pop();
         assert_eq!(ride.state(), RideState::Building);
         assert_eq!(ride.stats(), None);
-        assert!(ride.trains().is_empty());
+        assert_eq!(ride.trains().len(), 0);
         assert!(ride.open().is_err());
     }
 
