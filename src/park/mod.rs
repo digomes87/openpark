@@ -20,8 +20,10 @@ mod scenery;
 mod shop;
 mod staff;
 mod terrain;
+mod thought;
 mod track;
 mod walk;
+mod weather;
 
 pub use facility::Facility;
 pub use finance::Campaign;
@@ -37,8 +39,10 @@ pub use scenery::Scenery;
 pub use shop::Shop;
 pub use staff::{Staff, StaffKind};
 pub use terrain::Terrain;
+pub use thought::Thought;
 pub use track::{Heading, Segment, Track, TrackPiece};
 pub use walk::Walk;
+pub use weather::Weather;
 
 use anyhow::{Context, Result};
 use isogrid::grid::Grid;
@@ -91,6 +95,8 @@ pub struct Park {
     objective: Objective,
     /// Whether it has managed it.
     outcome: Outcome,
+    /// What the sky is doing.
+    weather: Weather,
     /// What people thought of the park when it last asked.
     ///
     /// Cached rather than computed on demand because the gate consults it every
@@ -305,6 +311,7 @@ impl Park {
             campaign: None,
             objective: Objective::standard(),
             outcome: Outcome::Pending,
+            weather: Weather::Sunny,
             reputation: 0,
         };
 

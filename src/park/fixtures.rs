@@ -28,6 +28,19 @@ pub fn bare_park_opened_for(ticks: u64) -> Park {
     run(park, ticks)
 }
 
+/// Runs a park for `ticks` with the sun out the whole time.
+///
+/// For tests that are about something else. The weather turns on its own and
+/// pulls on the gate, the crowd's mood and how thirsty everybody gets, which is
+/// the point of it — and which makes it noise in a test about a queue.
+pub fn run_in_the_sun(mut park: Park, ticks: u64) -> Park {
+    for _ in 0..ticks {
+        park.set_weather(crate::park::Weather::Sunny);
+        park.tick_once();
+    }
+    park
+}
+
 pub fn run(mut park: Park, ticks: u64) -> Park {
     for _ in 0..ticks {
         park.tick_once();

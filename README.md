@@ -70,6 +70,24 @@ corner nobody visits does nothing. The rating is what decides how busy the gate
 gets: word of mouth is the only advertising a park has, and a park nobody has
 heard of fills four times slower than one everybody is talking about.
 
+The weather is the one thing in the park nobody chose. It turns on its own and
+walks rather than jumping — sun clouds over before it rains, and a storm blows
+itself out through rain — and it pulls on nearly everything: sun is thirsty work
+and sells drinks, a storm turns away three quarters of the people who would have
+come, and standing out in the rain takes it out of a crowd with nowhere to
+shelter.
+
+![The same park under a storm: 22 guests, 26% happy, and everybody going
+home](docs/images/storm.png)
+
+And the park will tell you what is wrong with it. Every guest keeps the last
+thing it thought — the queue it walked out of, the ride that shook it about, the
+price it would not pay, the thing it wanted and could not find — and the HUD
+carries the loudest complaint in the park. Hover a guest to hear it from them.
+
+![The HUD reading "Loudest: 10 x I'm thirsty" over a busy
+crossroads](docs/images/thoughts.png)
+
 Guests want more than feeding. Thirst arrives before hunger, and a drink fills a
 bladder faster than a meal does — so a park that sells drinks without building
 toilets has made a decision whether it meant to or not. A bursting guest sours
@@ -161,8 +179,8 @@ cargo run --release -- --screenshot docs/images/park.png \
 
 `--ticks` fast-forwards the simulation before the window opens, so a picture of
 a busy afternoon does not take an afternoon to take. `--seed`, `--focus`,
-`--zoom`, `--tool` and `--hover` frame the shot, and `--coaster` lays the demo
-ride the picture above shows; `--help` lists them all.
+`--zoom`, `--tool` and `--hover` frame the shot, `--coaster` lays the demo ride,
+`--weather` picks the day; `--help` lists them all.
 
 ### Saving
 

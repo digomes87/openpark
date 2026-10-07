@@ -167,10 +167,25 @@ impl Needs {
     /// `walking` slows everything down when false, so a guest waiting somewhere
     /// wears out more slowly than one tramping across the grass.
     pub fn wear_down(&mut self, walking: bool) {
+        self.wear_down_in(walking, 1.0);
+    }
+
+    /// One tick of being alive, in weather that makes people `thirsty` times as
+    /// thirsty as an ordinary grey day.
+    ///
+    /// The park knows what the sky is doing; [`Needs`] knows what being thirsty
+    /// is, and nothing else.
+    pub fn wear_down_in(&mut self, walking: bool, thirsty: f32) {
         let effort = if walking { 1.0 } else { Self::RESTING };
+        let thirsty = if thirsty.is_nan() {
+            1.0
+        } else {
+            thirsty.clamp(0.0, 4.0)
+        };
 
         self.hunger = (self.hunger + Self::rate(Self::TICKS_UNTIL_HUNGRY) * effort).min(1.0);
-        self.thirst = (self.thirst + Self::rate(Self::TICKS_UNTIL_THIRSTY) * effort).min(1.0);
+        self.thirst =
+            (self.thirst + Self::rate(Self::TICKS_UNTIL_THIRSTY) * effort * thirsty).min(1.0);
         self.bladder = (self.bladder + Self::rate(Self::TICKS_UNTIL_DESPERATE)).min(1.0);
         self.energy = (self.energy - Self::rate(Self::TICKS_UNTIL_EXHAUSTED) * effort).max(0.0);
         self.boredom = (self.boredom + Self::rate(Self::TICKS_UNTIL_BORED)).min(1.0);

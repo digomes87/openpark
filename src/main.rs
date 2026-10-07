@@ -48,6 +48,10 @@ async fn main() -> Result<()> {
             .context("failed to lay out the starting park")?,
     };
 
+    if let Some(weather) = options.weather {
+        park.set_weather(weather);
+    }
+
     // Laid before the clock runs, so a fast-forward has something to queue for.
     if options.coaster {
         let id = openpark::demo::coaster(&mut park).context("failed to lay the demo coaster")?;

@@ -6,7 +6,7 @@
 use anyhow::{Context, Result};
 use isogrid::iso::TilePos;
 
-use crate::park::{Facility, FlatRide, Scenery, StaffKind, Terrain};
+use crate::park::{Facility, FlatRide, Scenery, StaffKind, Terrain, Weather};
 use crate::tool::Tool;
 
 /// How the game was asked to start.
@@ -28,6 +28,8 @@ pub struct Options {
     pub tool: Tool,
     /// Whether to lay the demo coaster before the window opens.
     pub coaster: bool,
+    /// The weather to open on.
+    pub weather: Option<Weather>,
     /// A save to load instead of generating a park.
     pub load: Option<String>,
     /// Where the save tools write, and where to write once at startup.
@@ -45,6 +47,7 @@ impl Default for Options {
             hover: None,
             tool: Tool::default(),
             coaster: false,
+            weather: None,
             load: None,
             save: None,
         }
@@ -62,6 +65,7 @@ openpark — a park simulator
     --focus X,Y         tile to centre the view on
     --hover X,Y         tile to pretend the pointer is over
     --coaster           lay the demo coaster before the window opens
+    --weather NAME      sunny, cloudy, rain or storm
     --load PATH         start from a saved park instead of a new one
     --save PATH         save there once the park is ready, and bind the save
                         tools to it
@@ -116,6 +120,7 @@ impl Options {
                 Flag::Hover => options.hover = Some(tile(&value()?, "--hover")?),
                 Flag::Tool => options.tool = tool(&value()?)?,
                 Flag::Coaster => options.coaster = true,
+                Flag::Weather => options.weather = Some(weather(&value()?)?),
                 Flag::Load => options.load = Some(value()?),
                 Flag::Save => options.save = Some(value()?),
                 Flag::Help => anyhow::bail!("{USAGE}"),
@@ -142,6 +147,7 @@ enum Flag {
     Hover,
     Tool,
     Coaster,
+    Weather,
     Load,
     Save,
     Help,
@@ -158,6 +164,7 @@ fn value_of(argument: &str) -> Flag {
         "--hover" => Flag::Hover,
         "--tool" => Flag::Tool,
         "--coaster" => Flag::Coaster,
+        "--weather" => Flag::Weather,
         "--load" => Flag::Load,
         "--save" => Flag::Save,
         "-h" | "--help" => Flag::Help,
@@ -178,6 +185,17 @@ fn tile(value: &str, flag: &str) -> Result<TilePos> {
         .split_once(',')
         .with_context(|| format!("{flag} wants X,Y, not {value:?}"))?;
     Ok(TilePos::new(parse(x, flag)?, parse(y, flag)?))
+}
+
+/// Parses the weather by name.
+fn weather(value: &str) -> Result<Weather> {
+    match value {
+        "sunny" => Ok(Weather::Sunny),
+        "cloudy" => Ok(Weather::Cloudy),
+        "rain" => Ok(Weather::Rain),
+        "storm" => Ok(Weather::Storm),
+        other => anyhow::bail!("--weather does not know {other:?}"),
+    }
 }
 
 /// Parses a tool by name.

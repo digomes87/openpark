@@ -47,6 +47,11 @@ pub fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
 
     let reach = f32::from(u16::try_from(park.width() + park.height()).unwrap_or(u16::MAX));
 
+    // A wet afternoon is a darker one: the whole park is drawn in whatever light
+    // there is, which is cheaper and reads better than drawing rain on top of
+    // it.
+    let daylight = park.weather().daylight();
+
     for tile in land.terrain().draw_order_within(visible) {
         let Some(terrain) = land.ground(tile) else {
             continue;
@@ -54,7 +59,9 @@ pub fn draw_land(canvas: &mut dyn Renderer, park: &Park, camera: &Camera) {
 
         let top = land.height_at(tile).unwrap_or(Land::MIN_HEIGHT);
         let sheen = 1.0 + f32::from(top) * HEIGHT_SHEEN;
-        let colour = terrain.colour().shaded(depth(tile, reach) * sheen);
+        let colour = terrain
+            .colour()
+            .shaded(depth(tile, reach) * sheen * daylight);
 
         // The face first, so the lit top is drawn over the top of it.
         for step in (drops_to(land, tile)..top).rev() {
@@ -250,6 +257,30 @@ mod tests {
             fills(&littered),
             fills(&clean) + usize::from(Park::MAX_LITTER),
             "one mark a bit of rubbish, drawn over the tile rather than instead of it"
+        );
+    }
+
+    #[test]
+    fn a_wet_afternoon_is_drawn_darker_than_a_sunny_one() {
+        let (mut park, camera) = fixture();
+
+        park.set_weather(crate::park::Weather::Sunny);
+        let mut bright = Recorder::new();
+        draw_land(&mut bright, &park, &camera);
+
+        park.set_weather(crate::park::Weather::Storm);
+        let mut dim = Recorder::new();
+        draw_land(&mut dim, &park, &camera);
+
+        assert_ne!(
+            bright.commands(),
+            dim.commands(),
+            "a storm was drawn in the same light as a sunny day"
+        );
+        assert_eq!(
+            fills(&bright),
+            fills(&dim),
+            "the weather changed how much was drawn rather than how it looked"
         );
     }
 
